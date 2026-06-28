@@ -382,7 +382,7 @@ def make_tradingview_chart(interval: str, support: list, resistance: list,
 <script>
   new TradingView.widget({{
     autosize: true,
-    symbol: "COMEX:SI1!",
+    symbol: "TVC:SILVER",
     interval: "{tv_interval}",
     timezone: "Etc/UTC",
     theme: "dark",
