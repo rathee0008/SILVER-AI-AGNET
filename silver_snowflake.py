@@ -159,7 +159,7 @@ def _cci(df, n=20):
     """Commodity Channel Index."""
     tp = (df["High"] + df["Low"] + df["Close"]) / 3
     sma = tp.rolling(n).mean()
-    mad = tp.rolling(n).apply(lambda x: pd.Series(x).mad(), raw=False)
+    mad = tp.rolling(n).apply(lambda x: np.mean(np.abs(x - np.mean(x))), raw=True)
     return (tp - sma) / (0.015 * mad + 1e-10)
 
 def _adx(df, n=14):
@@ -211,33 +211,32 @@ def _ichimoku(df, t=9, k=26, s=52):
     return tenkan, kijun, senkou_a, senkou_b, chikou
 
 def _supertrend(df, n=10, mult=3.0):
-    """Supertrend indicator."""
-    atr_v = _atr(df, n)
-    hl2 = (df["High"] + df["Low"]) / 2
-    upper_band = hl2 + mult * atr_v
-    lower_band = hl2 - mult * atr_v
+    """Supertrend indicator — numpy loop to avoid pandas iloc chained assignment."""
+    atr_v = _atr(df, n).values
+    hl2   = ((df["High"] + df["Low"]) / 2).values
+    close = df["Close"].values
 
-    supertrend = pd.Series(index=df.index, dtype=float)
-    direction  = pd.Series(index=df.index, dtype=int)
+    ub = hl2 + mult * atr_v
+    lb = hl2 - mult * atr_v
+
+    supertrend = np.full(len(df), np.nan)
+    direction  = np.zeros(len(df), dtype=int)
 
     for i in range(1, len(df)):
-        prev_ub = upper_band.iloc[i - 1]
-        prev_lb = lower_band.iloc[i - 1]
-        prev_close = df["Close"].iloc[i - 1]
-
-        upper_band.iloc[i] = min(upper_band.iloc[i], prev_ub) if prev_close <= prev_ub else upper_band.iloc[i]
-        lower_band.iloc[i] = max(lower_band.iloc[i], prev_lb) if prev_close >= prev_lb else lower_band.iloc[i]
+        # Adjust bands: only tighten, never widen, unless price crosses
+        ub[i] = min(ub[i], ub[i - 1]) if close[i - 1] <= ub[i - 1] else ub[i]
+        lb[i] = max(lb[i], lb[i - 1]) if close[i - 1] >= lb[i - 1] else lb[i]
 
         if i == 1:
-            direction.iloc[i] = -1
-        elif supertrend.iloc[i - 1] == prev_ub:
-            direction.iloc[i] = -1 if df["Close"].iloc[i] > upper_band.iloc[i] else 1
+            direction[i] = -1
+        elif supertrend[i - 1] == ub[i - 1]:
+            direction[i] = -1 if close[i] > ub[i] else 1
         else:
-            direction.iloc[i] = 1 if df["Close"].iloc[i] < lower_band.iloc[i] else -1
+            direction[i] = 1 if close[i] < lb[i] else -1
 
-        supertrend.iloc[i] = lower_band.iloc[i] if direction.iloc[i] == -1 else upper_band.iloc[i]
+        supertrend[i] = lb[i] if direction[i] == -1 else ub[i]
 
-    return supertrend, direction
+    return pd.Series(supertrend, index=df.index), pd.Series(direction, index=df.index)
 
 def _detect_divergence(price: pd.Series, indicator: pd.Series, lookback=20):
     """Simple divergence detector: returns 'bullish', 'bearish', or 'none'."""
