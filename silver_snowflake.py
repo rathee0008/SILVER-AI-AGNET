@@ -264,6 +264,51 @@ def fetch_live_price() -> dict:
             "session_range_pct": round((session_high - session_low) / session_low * 100, 2) if session_low else 0,
         }
     except Exception:
+        pass
+    # Fallback: try 15-min interval
+    try:
+        r = requests.get(
+            f"{YF_BASE}/{TICKER}",
+            params={"interval": "15m", "range": "5d", "includePrePost": "false"},
+            headers=YF_HDR, timeout=10,
+        )
+        r.raise_for_status()
+        res = r.json()["chart"]["result"][0]
+        q   = res["indicators"]["quote"][0]
+        ts  = res["timestamp"]
+        closes  = [c for c in q["close"]  if c is not None]
+        opens_l = [o for o in q["open"]   if o is not None]
+        highs   = [h for h in q["high"]   if h is not None]
+        lows    = [lv for lv in q["low"]  if lv is not None]
+        volumes = [v for v in q.get("volume", [0]*len(ts)) if v is not None]
+        if not closes:
+            return {}
+        price        = closes[-1]
+        session_high = max(highs[-20:])    if highs    else price
+        session_low  = min(lows[-20:])     if lows     else price
+        session_open = opens_l[-20]        if len(opens_l) >= 20 else opens_l[0] if opens_l else price
+        avg_vol      = sum(volumes[-20:]) / min(20, len(volumes)) if volumes else 1
+        last_vol     = volumes[-1]  if volumes else 0
+        prev_close   = closes[-2]   if len(closes) >= 2 else closes[0]
+        chg_1m       = round(price - prev_close, 3)
+        chg_1m_pct   = round((price - prev_close) / prev_close * 100, 3) if prev_close else 0
+        chg_day      = round(price - session_open, 3)
+        chg_day_pct  = round((price - session_open) / session_open * 100, 3) if session_open else 0
+        ticks = []
+        for i in range(max(0, len(closes) - 20), len(closes)):
+            direction = "U" if i == 0 or closes[i] >= closes[i - 1] else "D"
+            ticks.append({"t": datetime.utcfromtimestamp(ts[i]).strftime("%H:%M"), "p": round(closes[i], 3), "dir": direction})
+        return {
+            "price": round(price, 3), "session_high": round(session_high, 3),
+            "session_low": round(session_low, 3), "session_open": round(session_open, 3),
+            "chg_1m": chg_1m, "chg_1m_pct": chg_1m_pct,
+            "chg_day": chg_day, "chg_day_pct": chg_day_pct,
+            "last_vol": int(last_vol), "avg_vol": int(avg_vol),
+            "vol_ratio": round(last_vol / avg_vol, 2) if avg_vol else 0,
+            "ticks": ticks,
+            "session_range_pct": round((session_high - session_low) / session_low * 100, 2) if session_low else 0,
+        }
+    except Exception:
         return {}
 
 
@@ -706,7 +751,7 @@ st.caption("Real-time 5-min tick · Smart Alerts · Session Stats · Volume Anal
 live = fetch_live_price()
 
 if not live:
-    st.warning("⚠️ Could not fetch live tick data.")
+    st.warning("⚠️ Live tick data temporarily unavailable (market may be closed or data delayed). Try refreshing in a few minutes.")
 else:
     def mon_card(label, value, sub="", color="#f0f6fc"):
         return (f'<div class="monitor-card">'
