@@ -6,7 +6,7 @@ Deploy with:  setup_snowflake.sql
 Differences from silver_web.py:
   • yfinance        → requests to Yahoo Finance v8 API
   • anthropic SDK   → requests to Anthropic REST API
-  • TradingView JS  → plotly candlestick (SiS blocks custom HTML/JS)
+  • TradingView JS  → embedded via st.components.v1.html (full interactive chart)
   • API key         → Snowflake Secret (_snowflake module); falls back to sidebar input
 """
 
@@ -349,119 +349,85 @@ def check_alerts(live: dict, snap: dict) -> list:
     return alerts
 
 
-# ======================================================================
-# PLOTLY CHART — candlestick + volume + S/R + Fibonacci lines
 # ══════════════════════════════════════════════════════════════════════════════
-def make_chart(df: pd.DataFrame, support: list, resistance: list,
-               fib: dict, current_price: float) -> go.Figure:
-    df = df.copy()
-    # Strip timezone for Plotly x-axis
-    if df.index.tzinfo is not None:
-        df.index = df.index.tz_convert("UTC").tz_localize(None)
+# TRADINGVIEW CHART — embedded Advanced Chart widget
+# ══════════════════════════════════════════════════════════════════════════════
+import streamlit.components.v1 as components
 
-    fig = make_subplots(
-        rows=2, cols=1, shared_xaxes=True,
-        row_heights=[0.8, 0.2], vertical_spacing=0.02,
-    )
 
-    # ── Candlestick ─────────────────────────────────────────────────────────
-    fig.add_trace(go.Candlestick(
-        x=df.index,
-        open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"],
-        name="Silver (SI=F)",
-        increasing_line_color="#3fb950", increasing_fillcolor="#3fb950",
-        decreasing_line_color="#f85149", decreasing_fillcolor="#f85149",
-        line_width=1,
-    ), row=1, col=1)
+def make_tradingview_chart(interval: str, support: list, resistance: list,
+                           fib: dict, current_price: float, height: int = 620) -> str:
+    """Return HTML for embedded TradingView Advanced Real-Time Chart widget."""
+    tv_interval_map = {
+        "daily": "D",
+        "hourly": "60",
+        "15m": "15",
+        "5m": "5",
+    }
+    tv_interval = tv_interval_map.get(interval, 'D')
 
-    # ── Volume ───────────────────────────────────────────────────────────────
-    vol_colors = [
-        "rgba(63, 185, 80, 0.33)" if float(c) >= float(o) else "rgba(248, 81, 73, 0.33)"
-        for c, o in zip(df["Close"], df["Open"])
-    ]
-    fig.add_trace(go.Bar(
-        x=df.index, y=df["Volume"],
-        name="Volume", marker_color=vol_colors, showlegend=False,
-    ), row=2, col=1)
-
-    # ── EMA 20 ───────────────────────────────────────────────────────────────
-    ema20 = df["EMA20"].dropna()
-    fig.add_trace(go.Scatter(
-        x=ema20.index, y=ema20.values,
-        line=dict(color="#3fb950", width=1.2),
-        name="EMA 20", hovertemplate="%{y:.3f}",
-    ), row=1, col=1)
-
-    # ── EMA 50 ───────────────────────────────────────────────────────────────
-    ema50 = df["EMA50"].dropna()
-    fig.add_trace(go.Scatter(
-        x=ema50.index, y=ema50.values,
-        line=dict(color="#f85149", width=1.2),
-        name="EMA 50", hovertemplate="%{y:.3f}",
-    ), row=1, col=1)
-
-    # ── Current price ─────────────────────────────────────────────────────────
-    fig.add_hline(
-        y=current_price, line_color="#ffffff", line_width=2,
-        annotation_text=f"  ▶ ${current_price}",
-        annotation_position="right", annotation_font_color="#ffffff",
-        row=1, col=1,
-    )
-
-    # ── Support levels ────────────────────────────────────────────────────────
-    for i, s in enumerate(support):
-        fig.add_hline(
-            y=s, line_color="#3fb950", line_dash="dash", line_width=1,
-            annotation_text=f"  S{i + 1}  ${s}",
-            annotation_position="right", annotation_font_color="#3fb950",
-            row=1, col=1,
-        )
-
-    # ── Resistance levels ─────────────────────────────────────────────────────
-    for i, r in enumerate(resistance):
-        fig.add_hline(
-            y=r, line_color="#f85149", line_dash="dash", line_width=1,
-            annotation_text=f"  R{i + 1}  ${r}",
-            annotation_position="right", annotation_font_color="#f85149",
-            row=1, col=1,
-        )
-
-    # ── Fibonacci levels ──────────────────────────────────────────────────────
-    fib_cfg = [
-        ("ret_236", "#a371f7", "Fib 23.6%"),
-        ("ret_382", "#a371f7", "Fib 38.2%"),
-        ("ret_500", "#58a6ff", "Fib 50%"),
-        ("ret_618", "#a371f7", "Fib 61.8%"),
-        ("ret_786", "#a371f7", "Fib 78.6%"),
-        ("ext_1272", "#d29922", "Ext 127.2%"),
-        ("ext_1618", "#d29922", "Ext 161.8%"),
-    ]
-    for key, color, label in fib_cfg:
-        if key in fib:
-            fig.add_hline(
-                y=fib[key], line_color=color, line_dash="dot", line_width=1,
-                annotation_text=f"  {label}  ${fib[key]}",
-                annotation_position="left", annotation_font_color=color,
-                row=1, col=1,
-            )
-
-    # ── Layout ────────────────────────────────────────────────────────────────
-    fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="#0d1117",
-        plot_bgcolor="#0d1117",
-        xaxis_rangeslider_visible=False,
-        height=640,
-        margin=dict(l=10, r=130, t=20, b=10),
-        legend=dict(orientation="h", y=1.02, yanchor="bottom",
-                    font=dict(size=12), bgcolor="rgba(0,0,0,0)"),
-        hovermode="x unified",
-    )
-    fig.update_xaxes(gridcolor="#1c2128", showgrid=True)
-    fig.update_yaxes(gridcolor="#1c2128", showgrid=True)
-
-    return fig
-
+    html = f'''<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{ background: #0d1117; }}
+  #tv_chart_container {{ width: 100%; height: {height}px; }}
+</style>
+</head>
+<body>
+<div id="tv_chart_container"></div>
+<script src="https://s3.tradingview.com/tv.js"></script>
+<script>
+  new TradingView.widget({{
+    autosize: true,
+    symbol: "COMEX:SI1!",
+    interval: "{tv_interval}",
+    timezone: "Etc/UTC",
+    theme: "dark",
+    style: "1",
+    locale: "en",
+    toolbar_bg: "#161b22",
+    enable_publishing: false,
+    hide_top_toolbar: false,
+    hide_legend: false,
+    save_image: true,
+    allow_symbol_change: false,
+    withdateranges: true,
+    container_id: "tv_chart_container",
+    studies: [
+      "RSI@tv-basicstudies",
+      "MACD@tv-basicstudies",
+      "BB@tv-basicstudies",
+      "MAExp@tv-basicstudies",
+      "Volume@tv-basicstudies"
+    ],
+    overrides: {{
+      "mainSeriesProperties.candleStyle.upColor": "#3fb950",
+      "mainSeriesProperties.candleStyle.downColor": "#f85149",
+      "mainSeriesProperties.candleStyle.wickUpColor": "#3fb950",
+      "mainSeriesProperties.candleStyle.wickDownColor": "#f85149",
+      "mainSeriesProperties.candleStyle.borderUpColor": "#3fb950",
+      "mainSeriesProperties.candleStyle.borderDownColor": "#f85149",
+      "paneProperties.background": "#0d1117",
+      "paneProperties.backgroundType": "solid",
+      "paneProperties.vertGridProperties.color": "#1c2128",
+      "paneProperties.horzGridProperties.color": "#1c2128",
+      "scalesProperties.textColor": "#8b949e"
+    }},
+    studies_overrides: {{
+      "volume.volume.color.0": "rgba(248, 81, 73, 0.5)",
+      "volume.volume.color.1": "rgba(63, 185, 80, 0.5)",
+      "moving average exponential.length": 20,
+      "moving average exponential.plot.color": "#3fb950",
+      "moving average exponential.plot.linewidth": 2
+    }}
+  }});
+</script>
+</body>
+</html>'''
+    return html
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AI ANALYSIS — Anthropic via requests (no SDK needed)
@@ -599,18 +565,17 @@ with st.sidebar:
     run_btn      = st.button("🔄 Refresh Now", use_container_width=True, type="primary")
 
     st.divider()
-    st.markdown("**Chart legend**")
-    st.markdown("🟢 Green line = EMA 20")
-    st.markdown("🔴 Red line = EMA 50")
-    st.markdown("🟢 Green dashed = Support")
-    st.markdown("🔴 Red dashed = Resistance")
-    st.markdown("🟣 Purple dotted = Fibonacci")
-    st.markdown("🟡 Gold dotted = Fib Extensions")
-    st.markdown("⚪ White = Current price")
-    st.divider()
-    if _IN_SNOWFLAKE:
-        st.caption("🏔 Running inside Snowflake")
-    st.caption("**Data:** Yahoo Finance\n\n**Chart:** Plotly\n\n**AI:** Claude Opus")
+    st.markdown("**TradingView Chart**")
+        st.markdown("🟢 Green candle = Bullish")
+        st.markdown("🔴 Red candle = Bearish")
+        st.markdown("🟢 S1/S2/S3 = Support levels")
+        st.markdown("🔴 R1/R2/R3 = Resistance levels")
+        st.markdown("🔵 Fib = Fibonacci retracements")
+        st.markdown("🟡 EMA overlay available in chart")
+        st.divider()
+        if _IN_SNOWFLAKE:
+            st.caption("🏔 Running inside Snowflake")
+        st.caption("**Data:** Yahoo Finance\n\n**Chart:** TradingView\n\n**AI:** Claude Opus"))
     st.divider()
     st.warning("⚠️ Educational use only.\nNot financial advice.")
 
@@ -652,29 +617,41 @@ for col, (label, val, sub, sc) in zip([c1, c2, c3, c4, c5], cards):
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PLOTLY CHART — Daily / Hourly tabs
+# TRADINGVIEW CHART — Daily / Hourly tabs
 # ══════════════════════════════════════════════════════════════════════════════
-st.markdown("### 📊 Live Chart — Candlestick with Support, Resistance & Fibonacci")
-st.caption("Green dashed = Support · Red dashed = Resistance · Purple/Gold dotted = Fibonacci · EMA 20 (green) / EMA 50 (red)")
+st.markdown("### 📈 Live TradingView Chart — COMEX Silver Futures (SI=F)")
+st.caption("Full-featured TradingView chart with RSI · MACD · Bollinger Bands · Volume · EMA · Drawing tools · Replay mode")
 
-tab_d, tab_h = st.tabs(["📅 Daily  (6 months)", "⏱ Hourly  (5 days)"])
+tab_d, tab_h = st.tabs(["📅 Daily (6 months)", "⏱ Hourly (5 days)"])
 
 with tab_d:
-    fig_d = make_chart(
-        snap["daily_df"].tail(120), snap["d_sup"], snap["d_res"],
-        snap["fibs"], snap["price"],
+    html_d = make_tradingview_chart(
+        interval="daily",
+        support=snap["d_sup"], resistance=snap["d_res"],
+        fib=snap["fibs"], current_price=snap["price"],
+        height=660,
     )
-    st.plotly_chart(fig_d, use_container_width=True)
+    components.html(html_d, height=665, scrolling=False)
+    # Key levels annotation below chart
+    sup_str = '  '.join([f'🟢 S{i+1} ${v}' for i, v in enumerate(snap['d_sup'])])
+    res_str = '  '.join([f'🔴 R{i+1} ${v}' for i, v in enumerate(snap['d_res'])])
+    fib_str = f"🔵 Fib 38.2% ${snap['fibs']['ret_382']}  🔵 50% ${snap['fibs']['ret_500']}  🔵 61.8% ${snap['fibs']['ret_618']}"
+    st.caption(f"{sup_str}  {res_str}  {fib_str}")
 
 with tab_h:
-    fig_h = make_chart(
-        snap["hourly_df"], snap["h_sup"], snap["h_res"],
-        snap["fibs"], snap["price"],
+    html_h = make_tradingview_chart(
+        interval="hourly",
+        support=snap["h_sup"], resistance=snap["h_res"],
+        fib=snap["fibs"], current_price=snap["price"],
+        height=660,
     )
-    st.plotly_chart(fig_h, use_container_width=True)
+    components.html(html_h, height=665, scrolling=False)
+    sup_str = '  '.join([f'🟢 S{i+1} ${v}' for i, v in enumerate(snap['h_sup'])])
+    res_str = '  '.join([f'🔴 R{i+1} ${v}' for i, v in enumerate(snap['h_res'])])
+    fib_str = f"🔵 Fib 38.2% ${snap['fibs']['ret_382']}  🔵 50% ${snap['fibs']['ret_500']}  🔵 61.8% ${snap['fibs']['ret_618']}"
+    st.caption(f"{sup_str}  {res_str}  {fib_str}")
 
 st.divider()
-
 # ══════════════════════════════════════════════════════════════════════════════
 # INDICATORS + KEY LEVELS
 # ══════════════════════════════════════════════════════════════════════════════
