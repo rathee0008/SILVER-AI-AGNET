@@ -218,7 +218,7 @@ def fetch_live_price() -> dict:
     try:
         r = requests.get(
             f"{YF_BASE}/{TICKER}",
-            params={"interval": "1m", "range": "1d", "includePrePost": "false"},
+            params={"interval": "5m", "range": "1d", "includePrePost": "false"},
             headers=YF_HDR, timeout=10,
         )
         r.raise_for_status()
@@ -700,8 +700,8 @@ st.divider()
 # ======================================================================
 # LIVE DATA MONITORING SYSTEM
 # ======================================================================
-st.markdown("### U0001f7e2 Live Data Monitoring System")
-st.caption("Real-time 1-min tick · Smart Alerts · Session Stats · Volume Analysis · Momentum Gauges")
+st.markdown("### 🟢 Live Data Monitoring System")
+st.caption("Real-time 5-min tick · Smart Alerts · Session Stats · Volume Analysis · Momentum Gauges")
 
 live = fetch_live_price()
 
@@ -761,7 +761,7 @@ else:
         st.markdown(f'<div><div style="font-size:12px;color:#8b949e;margin-bottom:4px">Volume: {live["vol_ratio"]}x avg</div><div class="gauge-bar-wrap"><div class="gauge-bar" style="width:{vp}%;background:{vgc}"></div></div><div style="font-size:11px;color:#8b949e;margin-top:3px">{vl}</div></div>', unsafe_allow_html=True)
 
     with col_ticks:
-        st.markdown("#### U0001f550 Price Tick Log (1-min)")
+        st.markdown("#### U0001f550 Price Tick Log (5-min)")
         ticks = live.get("ticks", [])[-15:]
         th = '<div style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:6px;max-height:220px;overflow-y:auto;">'
         for tk in reversed(ticks):
