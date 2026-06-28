@@ -566,16 +566,16 @@ with st.sidebar:
 
     st.divider()
     st.markdown("**TradingView Chart**")
-        st.markdown("🟢 Green candle = Bullish")
-        st.markdown("🔴 Red candle = Bearish")
-        st.markdown("🟢 S1/S2/S3 = Support levels")
-        st.markdown("🔴 R1/R2/R3 = Resistance levels")
-        st.markdown("🔵 Fib = Fibonacci retracements")
-        st.markdown("🟡 EMA overlay available in chart")
-        st.divider()
-        if _IN_SNOWFLAKE:
-            st.caption("🏔 Running inside Snowflake")
-        st.caption("**Data:** Yahoo Finance\n\n**Chart:** TradingView\n\n**AI:** Claude Opus"))
+    st.markdown("🟢 Green candle = Bullish")
+    st.markdown("🔴 Red candle = Bearish")
+    st.markdown("🟢 S1/S2/S3 = Support levels")
+    st.markdown("🔴 R1/R2/R3 = Resistance levels")
+    st.markdown("🔵 Fib = Fibonacci retracements")
+    st.markdown("🟡 EMA overlay available in chart")
+    st.divider()
+    if _IN_SNOWFLAKE:
+        st.caption("🏔 Running inside Snowflake")
+    st.caption("**Data:** Yahoo Finance\n\n**Chart:** TradingView\n\n**AI:** Claude Opus")
     st.divider()
     st.warning("⚠️ Educational use only.\nNot financial advice.")
 
