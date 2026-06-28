@@ -399,20 +399,15 @@ One sharp insight a veteran silver trader would add."""
         headers={
             "x-api-key": api_key,
             "anthropic-version": "2023-06-01",
-            "anthropic-beta": "prompt-caching-2024-07-31",
             "content-type": "application/json",
         },
         json={
             "model": AI_MODEL,
             "max_tokens": 2000,
-            "system": [{
-                "type": "text",
-                "text": (
-                    "You are a senior COMEX silver futures trader with 20+ years of experience. "
-                    "Give precise, actionable trade setups with exact price levels. All prices in USD/oz."
-                ),
-                "cache_control": {"type": "ephemeral"},
-            }],
+            "system": (
+                "You are a senior COMEX silver futures trader with 20+ years of experience. "
+                "Give precise, actionable trade setups with exact price levels. All prices in USD/oz."
+            ),
             "messages": [{"role": "user", "content": prompt}],
         },
         timeout=60,
