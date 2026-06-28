@@ -210,7 +210,101 @@ def load_snapshot():
     )
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
+# LIVE MONITORING
+# =============================================================================
+def fetch_live_price() -> dict:
+    """Fetch live 1-min tick."""
+    try:
+        r = requests.get(
+            f"{YF_BASE}/{TICKER}",
+            params={"interval": "1m", "range": "1d", "includePrePost": "false"},
+            headers=YF_HDR, timeout=10,
+        )
+        r.raise_for_status()
+        res = r.json()["chart"]["result"][0]
+        q   = res["indicators"]["quote"][0]
+        ts  = res["timestamp"]
+        closes  = [c for c in q["close"]  if c is not None]
+        opens_l = [o for o in q["open"]   if o is not None]
+        highs   = [h for h in q["high"]   if h is not None]
+        lows    = [lv for lv in q["low"]  if lv is not None]
+        volumes = [v for v in q.get("volume", [0]*len(ts)) if v is not None]
+        if not closes:
+            return {}
+        price        = closes[-1]
+        session_high = max(highs)    if highs    else price
+        session_low  = min(lows)     if lows     else price
+        session_open = opens_l[0]    if opens_l  else price
+        avg_vol      = sum(volumes) / len(volumes) if volumes else 1
+        last_vol     = volumes[-1]   if volumes  else 0
+        prev_close   = closes[-2]    if len(closes) >= 2 else closes[0]
+        chg_1m       = round(price - prev_close, 3)
+        chg_1m_pct   = round((price - prev_close) / prev_close * 100, 3) if prev_close else 0
+        chg_day      = round(price - session_open, 3)
+        chg_day_pct  = round((price - session_open) / session_open * 100, 3) if session_open else 0
+        ticks = []
+        for i in range(max(0, len(closes) - 20), len(closes)):
+            direction = "U" if i == 0 or closes[i] >= closes[i - 1] else "D"
+            ticks.append({
+                "t": datetime.utcfromtimestamp(ts[i]).strftime("%H:%M"),
+                "p": round(closes[i], 3),
+                "dir": direction,
+            })
+        return {
+            "price": round(price, 3),
+            "session_high": round(session_high, 3),
+            "session_low":  round(session_low,  3),
+            "session_open": round(session_open, 3),
+            "chg_1m": chg_1m, "chg_1m_pct": chg_1m_pct,
+            "chg_day": chg_day, "chg_day_pct": chg_day_pct,
+            "last_vol": int(last_vol), "avg_vol": int(avg_vol),
+            "vol_ratio": round(last_vol / avg_vol, 2) if avg_vol else 0,
+            "ticks": ticks,
+            "session_range_pct": round((session_high - session_low) / session_low * 100, 2) if session_low else 0,
+        }
+    except Exception:
+        return {}
+
+
+def check_alerts(live: dict, snap: dict) -> list:
+    """Return triggered alert dicts."""
+    alerts = []
+    if not live:
+        return [{"level": "yellow", "msg": "No live data"}]
+    price = live["price"]
+    if snap.get("d_rsi") and snap["d_rsi"] > 75:
+        alerts.append({"level": "red",    "msg": f"RSI OVERBOUGHT {snap['d_rsi']} - reversal risk"})
+    if snap.get("d_rsi") and snap["d_rsi"] < 25:
+        alerts.append({"level": "green",  "msg": f"RSI OVERSOLD {snap['d_rsi']} - bounce opportunity"})
+    for lvl in snap.get("d_sup", []):
+        if abs(price - lvl) / lvl < 0.003:
+            alerts.append({"level": "green", "msg": f"Near daily Support ${lvl} - watch bounce"})
+    for lvl in snap.get("d_res", []):
+        if abs(price - lvl) / lvl < 0.003:
+            alerts.append({"level": "red",   "msg": f"Near daily Resistance ${lvl} - watch rejection"})
+    if live["vol_ratio"] >= 2.5:
+        alerts.append({"level": "yellow", "msg": f"Volume SPIKE {live['vol_ratio']}x avg"})
+    ema20 = snap.get("d_ema20") or 0
+    ema50 = snap.get("d_ema50") or 0
+    if ema20 and ema50 and abs(ema20 - ema50) / ema50 < 0.002:
+        alerts.append({"level": "yellow", "msg": "EMA 20/50 near crossover - trend change incoming"})
+    for lvl in snap.get("d_res", []):
+        if price > lvl and live.get("chg_1m_pct", 0) > 0.1:
+            alerts.append({"level": "green", "msg": f"BREAKOUT above ${lvl}!"})
+    for lvl in snap.get("d_sup", []):
+        if price < lvl and live.get("chg_1m_pct", 0) < -0.1:
+            alerts.append({"level": "red",   "msg": f"BREAKDOWN below ${lvl}!"})
+    dm = snap.get("d_macd") or 0
+    dms = snap.get("d_macd_sig") or 0
+    if dm and dms and abs(dm - dms) < 0.001:
+        alerts.append({"level": "yellow", "msg": "MACD crossing signal line"})
+    if not alerts:
+        alerts.append({"level": "green", "msg": "No critical alerts - market normal"})
+    return alerts
+
+
+# ======================================================================
 # PLOTLY CHART — candlestick + volume + S/R + Fibonacci lines
 # ══════════════════════════════════════════════════════════════════════════════
 def make_chart(df: pd.DataFrame, support: list, resistance: list,
@@ -603,7 +697,106 @@ with right:
 
 st.divider()
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ======================================================================
+# LIVE DATA MONITORING SYSTEM
+# ======================================================================
+st.markdown("### U0001f7e2 Live Data Monitoring System")
+st.caption("Real-time 1-min tick · Smart Alerts · Session Stats · Volume Analysis · Momentum Gauges")
+
+live = fetch_live_price()
+
+if not live:
+    st.warning("⚠️ Could not fetch live tick data.")
+else:
+    def mon_card(label, value, sub="", color="#f0f6fc"):
+        return (f'<div class="monitor-card">'
+                f'<div class="monitor-label">{label}</div>'
+                f'<div class="monitor-value" style="color:{color}">{value}</div>'
+                f'<div class="monitor-sub">{sub}</div></div>')
+
+    tick_color = "#3fb950" if live["chg_1m"] >= 0 else "#f85149"
+    day_color  = "#3fb950" if live["chg_day"] >= 0 else "#f85149"
+    tick_arrow = "▲" if live["chg_1m"] >= 0 else "▼"
+    day_arrow  = "▲" if live["chg_day"] >= 0 else "▼"
+
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    m1.markdown(mon_card("⚡ LIVE PRICE",   f"${live['price']}",        f"{tick_arrow} {live['chg_1m']:+.3f} ({live['chg_1m_pct']:+.3f}%) 1min", tick_color), unsafe_allow_html=True)
+    m2.markdown(mon_card("U0001f4c5 DAY CHANGE",  f"{day_arrow} {abs(live['chg_day_pct']):.2f}%", f"vs open ${live['session_open']}", day_color), unsafe_allow_html=True)
+    m3.markdown(mon_card("U0001f53a SESSION HIGH", f"${live['session_high']}", f"+{round(live['session_high']-live['session_open'],3)} from open", "#3fb950"), unsafe_allow_html=True)
+    m4.markdown(mon_card("U0001f53b SESSION LOW",  f"${live['session_low']}",  f"{round(live['session_low']-live['session_open'],3)} from open",  "#f85149"), unsafe_allow_html=True)
+    m5.markdown(mon_card("U0001f4cf SESSION RANGE", f"{live['session_range_pct']:.2f}%", f"${live['session_low']} – ${live['session_high']}", "#d29922"), unsafe_allow_html=True)
+    vc = "#f85149" if live['vol_ratio'] >= 2 else "#d29922" if live['vol_ratio'] >= 1.3 else "#8b949e"
+    m6.markdown(mon_card("U0001f4e6 VOL RATIO",    f"{live['vol_ratio']}x",   f"last {live['last_vol']:,} / avg {live['avg_vol']:,}", vc), unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    col_alerts, col_gauge, col_ticks = st.columns([1.4, 1, 1.2])
+
+    with col_alerts:
+        st.markdown("#### U0001f514 Live Alerts")
+        alerts = check_alerts(live, snap)
+        dot_map = {"red": "alert-dot-red", "green": "alert-dot-green", "yellow": "alert-dot-yellow"}
+        for al in alerts:
+            dc = dot_map.get(al["level"], "alert-dot-yellow")
+            st.markdown(
+                f'<div class="alert-row"><div class="alert-dot {dc}"></div>'
+                f'<span style="color:#c9d1d9">{al["msg"]}</span></div>',
+                unsafe_allow_html=True,
+            )
+
+    with col_gauge:
+        st.markdown("#### U0001f4ca Momentum Gauges")
+        span = live["session_high"] - live["session_low"]
+        pos  = int(((live["price"] - live["session_low"]) / span * 100)) if span else 50
+        bc   = "#3fb950" if pos > 60 else "#f85149" if pos < 40 else "#d29922"
+        st.markdown(f'<div style="margin-bottom:12px"><div style="font-size:12px;color:#8b949e;margin-bottom:4px">Session Position</div><div class="gauge-bar-wrap"><div class="gauge-bar" style="width:{pos}%;background:{bc}"></div></div><div style="font-size:11px;color:#8b949e;margin-top:3px">{pos}% of range</div></div>', unsafe_allow_html=True)
+        rv = snap.get("d_rsi") or 50
+        rp = int(min(100, max(0, rv)))
+        rc = "#f85149" if rv > 70 else "#3fb950" if rv < 30 else "#d29922"
+        rl = "OVERBOUGHT" if rv > 70 else "OVERSOLD" if rv < 30 else "NEUTRAL"
+        st.markdown(f'<div style="margin-bottom:12px"><div style="font-size:12px;color:#8b949e;margin-bottom:4px">RSI(14): {rv}</div><div class="gauge-bar-wrap"><div class="gauge-bar" style="width:{rp}%;background:{rc}"></div></div><div style="font-size:11px;color:#8b949e;margin-top:3px">{rl}</div></div>', unsafe_allow_html=True)
+        vp = int(min(100, live["vol_ratio"] / 3 * 100))
+        vgc = "#f85149" if live["vol_ratio"] >= 2 else "#d29922" if live["vol_ratio"] >= 1.3 else "#3fb950"
+        vl  = "SPIKE" if live["vol_ratio"] >= 2 else "ELEVATED" if live["vol_ratio"] >= 1.3 else "NORMAL"
+        st.markdown(f'<div><div style="font-size:12px;color:#8b949e;margin-bottom:4px">Volume: {live["vol_ratio"]}x avg</div><div class="gauge-bar-wrap"><div class="gauge-bar" style="width:{vp}%;background:{vgc}"></div></div><div style="font-size:11px;color:#8b949e;margin-top:3px">{vl}</div></div>', unsafe_allow_html=True)
+
+    with col_ticks:
+        st.markdown("#### U0001f550 Price Tick Log (1-min)")
+        ticks = live.get("ticks", [])[-15:]
+        th = '<div style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:6px;max-height:220px;overflow-y:auto;">'
+        for tk in reversed(ticks):
+            tc = "#3fb950" if tk["dir"] == "U" else "#f85149"
+            ta = "▲" if tk["dir"] == "U" else "▼"
+            th += f'<div class="tick-row"><span style="color:#8b949e">{tk["t"]}</span><span style="color:{tc};font-weight:700">{ta} ${tk["p"]}</span></div>'
+        th += '</div>'
+        st.markdown(th, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Sparkline
+    tick_prices = [tk["p"] for tk in live.get("ticks", [])]
+    tick_times  = [tk["t"] for tk in live.get("ticks", [])]
+    if len(tick_prices) >= 2:
+        sp_color = "#3fb950" if tick_prices[-1] >= tick_prices[0] else "#f85149"
+        fill_c   = "rgba(63,185,80,0.08)" if sp_color == "#3fb950" else "rgba(248,81,73,0.08)"
+        fig_spark = go.Figure(go.Scatter(
+            x=tick_times, y=tick_prices, mode="lines+markers",
+            line=dict(color=sp_color, width=2), marker=dict(size=4, color=sp_color),
+            fill="tozeroy", fillcolor=fill_c,
+            hovertemplate="<b>%{x}</b><br>$%{y:.3f}<extra></extra>",
+        ))
+        fig_spark.update_layout(
+            template="plotly_dark", paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+            height=140, margin=dict(l=0, r=0, t=10, b=0), showlegend=False,
+            xaxis=dict(showgrid=False, tickfont=dict(size=9)),
+            yaxis=dict(showgrid=True, gridcolor="#1c2128", tickformat="$.3f", tickfont=dict(size=9)),
+        )
+        st.caption(f"U0001f4c8 Last {len(tick_prices)} one-minute ticks")
+        st.plotly_chart(fig_spark, use_container_width=True)
+
+st.divider()
+
+# ======================================================================
 # AI ANALYSIS
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("### 🤖 AI Trade Analysis & Targets")
