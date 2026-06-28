@@ -766,19 +766,19 @@ else:
 
     m1, m2, m3, m4, m5, m6 = st.columns(6)
     m1.markdown(mon_card("⚡ LIVE PRICE",   f"${live['price']}",        f"{tick_arrow} {live['chg_1m']:+.3f} ({live['chg_1m_pct']:+.3f}%) 1min", tick_color), unsafe_allow_html=True)
-    m2.markdown(mon_card("U0001f4c5 DAY CHANGE",  f"{day_arrow} {abs(live['chg_day_pct']):.2f}%", f"vs open ${live['session_open']}", day_color), unsafe_allow_html=True)
-    m3.markdown(mon_card("U0001f53a SESSION HIGH", f"${live['session_high']}", f"+{round(live['session_high']-live['session_open'],3)} from open", "#3fb950"), unsafe_allow_html=True)
-    m4.markdown(mon_card("U0001f53b SESSION LOW",  f"${live['session_low']}",  f"{round(live['session_low']-live['session_open'],3)} from open",  "#f85149"), unsafe_allow_html=True)
-    m5.markdown(mon_card("U0001f4cf SESSION RANGE", f"{live['session_range_pct']:.2f}%", f"${live['session_low']} – ${live['session_high']}", "#d29922"), unsafe_allow_html=True)
+    m2.markdown(mon_card("DAY CHANGE",  f"{day_arrow} {abs(live['chg_day_pct']):.2f}%", f"vs open ${live['session_open']}", day_color), unsafe_allow_html=True)
+    m3.markdown(mon_card("SESSION HIGH", f"${live['session_high']}", f"+{round(live['session_high']-live['session_open'],3)} from open", "#3fb950"), unsafe_allow_html=True)
+    m4.markdown(mon_card("SESSION LOW",  f"${live['session_low']}",  f"{round(live['session_low']-live['session_open'],3)} from open",  "#f85149"), unsafe_allow_html=True)
+    m5.markdown(mon_card("SESSION RANGE", f"{live['session_range_pct']:.2f}%", f"${live['session_low']} – ${live['session_high']}", "#d29922"), unsafe_allow_html=True)
     vc = "#f85149" if live['vol_ratio'] >= 2 else "#d29922" if live['vol_ratio'] >= 1.3 else "#8b949e"
-    m6.markdown(mon_card("U0001f4e6 VOL RATIO",    f"{live['vol_ratio']}x",   f"last {live['last_vol']:,} / avg {live['avg_vol']:,}", vc), unsafe_allow_html=True)
+    m6.markdown(mon_card("VOL RATIO",    f"{live['vol_ratio']}x",   f"last {live['last_vol']:,} / avg {live['avg_vol']:,}", vc), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
     col_alerts, col_gauge, col_ticks = st.columns([1.4, 1, 1.2])
 
     with col_alerts:
-        st.markdown("#### U0001f514 Live Alerts")
+        st.markdown("#### ** Alerts**")
         alerts = check_alerts(live, snap)
         dot_map = {"red": "alert-dot-red", "green": "alert-dot-green", "yellow": "alert-dot-yellow"}
         for al in alerts:
@@ -790,7 +790,7 @@ else:
             )
 
     with col_gauge:
-        st.markdown("#### U0001f4ca Momentum Gauges")
+        st.markdown("#### **Momentum Gauges**")
         span = live["session_high"] - live["session_low"]
         pos  = int(((live["price"] - live["session_low"]) / span * 100)) if span else 50
         bc   = "#3fb950" if pos > 60 else "#f85149" if pos < 40 else "#d29922"
@@ -806,7 +806,7 @@ else:
         st.markdown(f'<div><div style="font-size:12px;color:#8b949e;margin-bottom:4px">Volume: {live["vol_ratio"]}x avg</div><div class="gauge-bar-wrap"><div class="gauge-bar" style="width:{vp}%;background:{vgc}"></div></div><div style="font-size:11px;color:#8b949e;margin-top:3px">{vl}</div></div>', unsafe_allow_html=True)
 
     with col_ticks:
-        st.markdown("#### U0001f550 Price Tick Log (5-min)")
+        st.markdown("#### **Price Tick Log (5-min)**")
         ticks = live.get("ticks", [])[-15:]
         th = '<div style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:6px;max-height:220px;overflow-y:auto;">'
         for tk in reversed(ticks):
@@ -836,7 +836,7 @@ else:
             xaxis=dict(showgrid=False, tickfont=dict(size=9)),
             yaxis=dict(showgrid=True, gridcolor="#1c2128", tickformat="$.3f", tickfont=dict(size=9)),
         )
-        st.caption(f"U0001f4c8 Last {len(tick_prices)} one-minute ticks")
+        st.caption(f"Last {len(tick_prices)} one-minute ticks")
         st.plotly_chart(fig_spark, use_container_width=True)
 
 st.divider()
