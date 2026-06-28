@@ -85,7 +85,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 TICKER   = "SI=F"
-AI_MODEL = "claude-opus-4-8"
+AI_MODEL = "claude-opus-4-5"
 YF_BASE  = "https://query1.finance.yahoo.com/v8/finance/chart"
 YF_HDR   = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
@@ -237,7 +237,7 @@ def make_chart(df: pd.DataFrame, support: list, resistance: list,
 
     # ── Volume ───────────────────────────────────────────────────────────────
     vol_colors = [
-        "#3fb95055" if float(c) >= float(o) else "#f8514955"
+        "rgba(63, 185, 80, 0.33)" if float(c) >= float(o) else "rgba(248, 81, 73, 0.33)"
         for c, o in zip(df["Close"], df["Open"])
     ]
     fig.add_trace(go.Bar(
