@@ -764,7 +764,7 @@ def make_chart(df, support, resistance, fib, current_price, show_ichimoku=True, 
     fig.update_yaxes(title_text='MACD', row=4, col=1)
     return fig
 
-def tradingview_widget(symbol='COMEX:SI1!', theme='dark', height=580):
+def tradingview_widget(symbol='OANDA:XAGUSD', theme='dark', height=580, interval='60'):
     '''Embedded TradingView Advanced Chart for live silver price.'''
     studies = [
         'RSI@tv-basicstudies',
@@ -799,7 +799,7 @@ def tradingview_widget(symbol='COMEX:SI1!', theme='dark', height=580):
     "width": "100%",
     "height": {height},
     "symbol": "{symbol}",
-    "interval": "60",
+    "interval": "{interval}",
     "timezone": "Etc/UTC",
     "theme": "{theme}",
     "style": "1",
@@ -823,7 +823,7 @@ def tradingview_widget(symbol='COMEX:SI1!', theme='dark', height=580):
 def tradingview_ticker_tape():
     '''TradingView ticker tape for silver, gold, DXY, rates.'''
     symbols = [
-        {'proName': 'COMEX:SI1!', 'title': 'Silver Futures'},
+        {'proName': 'TVC:SILVER', 'title': 'Silver Futures'},
         {'proName': 'TVC:SILVER', 'title': 'Silver Spot'},
         {'proName': 'OANDA:XAGUSD', 'title': 'XAG/USD'},
         {'proName': 'TVC:GOLD', 'title': 'Gold'},
@@ -1113,7 +1113,7 @@ with tab_tv:
     with tv_col2:
         tv_height = st.slider("Chart Height", 400, 800, 580, 50, key="tv_height")
     # Build widget with selected interval
-    tv_html = tradingview_widget(symbol="COMEX:SI1!", theme="dark", height=tv_height)
+    tv_html = tradingview_widget(symbol="OANDA:XAGUSD", theme="dark", height=tv_height, interval=tv_interval)
     components.html(tv_html, height=tv_height + 30, scrolling=False)
     st.caption("💡 TradingView chart includes live price, pre-built indicators and interactive tools.")
 
