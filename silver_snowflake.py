@@ -33,6 +33,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from plotly.subplots import make_subplots
 
 # ── Snowflake secret ──────────────────────────────────────────────────────────
@@ -576,136 +577,275 @@ def check_alerts(live, snap):
 # ══════════════════════════════════════════════════════════════════════════════
 # PLOTLY CHART — candlestick + volume + indicators + S/R + Ichimoku Cloud
 # ══════════════════════════════════════════════════════════════════════════════
-def make_chart(df, support, resistance, fib, current_price, show_ichimoku=True):
+def make_chart(df, support, resistance, fib, current_price, show_ichimoku=True, timeframe='Daily'):
     df = df.copy()
     if df.index.tzinfo is not None:
-        df.index = df.index.tz_convert("UTC").tz_localize(None)
+        df.index = df.index.tz_convert('UTC').tz_localize(None)
 
     fig = make_subplots(
-        rows=3, cols=1, shared_xaxes=True,
-        row_heights=[0.65, 0.20, 0.15], vertical_spacing=0.02,
-        subplot_titles=("", "RSI / StochRSI", "Volume"),
+        rows=4, cols=1, shared_xaxes=True,
+        row_heights=[0.55, 0.12, 0.18, 0.15], vertical_spacing=0.02,
+        subplot_titles=('', 'Volume', 'RSI / StochRSI', 'MACD'),
     )
 
     # Candlestick
     fig.add_trace(go.Candlestick(
-        x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"],
-        name="Silver (SI=F)",
-        increasing_line_color="#3fb950", increasing_fillcolor="#3fb950",
-        decreasing_line_color="#f85149", decreasing_fillcolor="#f85149",
+        x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
+        name='Silver (SI=F)',
+        increasing_line_color='#26a69a', increasing_fillcolor='#26a69a',
+        decreasing_line_color='#ef5350', decreasing_fillcolor='#ef5350',
         line_width=1,
     ), row=1, col=1)
 
-    # Ichimoku Cloud (Senkou A & B)
-    if show_ichimoku and "Ichi_SenkouA" in df.columns:
-        sa = df["Ichi_SenkouA"].dropna(); sb = df["Ichi_SenkouB"].dropna()
+    # Ichimoku Cloud
+    if show_ichimoku and 'Ichi_SenkouA' in df.columns:
+        sa = df['Ichi_SenkouA'].dropna(); sb = df['Ichi_SenkouB'].dropna()
         common_idx = sa.index.intersection(sb.index)
         if len(common_idx) > 0:
             sa_c = sa.loc[common_idx]; sb_c = sb.loc[common_idx]
+            bull_mask = (sa_c >= sb_c).mean() > 0.5
+            fill_c = 'rgba(38,166,154,0.10)' if bull_mask else 'rgba(239,83,80,0.10)'
             fig.add_trace(go.Scatter(
-                x=sa_c.index, y=sa_c.values, name="Senkou A",
-                line=dict(color="rgba(63,185,80,0.4)", width=1), showlegend=True,
+                x=sa_c.index, y=sa_c.values, name='Senkou A',
+                line=dict(color='rgba(38,166,154,0.5)', width=1), showlegend=True,
             ), row=1, col=1)
             fig.add_trace(go.Scatter(
-                x=sb_c.index, y=sb_c.values, name="Senkou B",
-                line=dict(color="rgba(248,81,73,0.4)", width=1), showlegend=True,
-                fill="tonexty",
-                fillcolor="rgba(63,185,80,0.06)",
+                x=sb_c.index, y=sb_c.values, name='Senkou B',
+                line=dict(color='rgba(239,83,80,0.5)', width=1), showlegend=True,
+                fill='tonexty', fillcolor=fill_c,
             ), row=1, col=1)
 
     # Supertrend
-    if "Supertrend" in df.columns and "ST_Dir" in df.columns:
-        st_bull = df[df["ST_Dir"] == -1]["Supertrend"]
-        st_bear = df[df["ST_Dir"] == 1]["Supertrend"]
+    if 'Supertrend' in df.columns and 'ST_Dir' in df.columns:
+        st_bull = df[df['ST_Dir'] == -1]['Supertrend']
+        st_bear = df[df['ST_Dir'] == 1]['Supertrend']
         if not st_bull.empty:
             fig.add_trace(go.Scatter(
-                x=st_bull.index, y=st_bull.values, mode="markers",
-                marker=dict(color="#3fb950", size=3, symbol="circle"),
-                name="Supertrend BUY",
+                x=st_bull.index, y=st_bull.values, mode='markers',
+                marker=dict(color='#26a69a', size=4, symbol='circle'),
+                name='Supertrend BUY',
             ), row=1, col=1)
         if not st_bear.empty:
             fig.add_trace(go.Scatter(
-                x=st_bear.index, y=st_bear.values, mode="markers",
-                marker=dict(color="#f85149", size=3, symbol="circle"),
-                name="Supertrend SELL",
+                x=st_bear.index, y=st_bear.values, mode='markers',
+                marker=dict(color='#ef5350', size=4, symbol='circle'),
+                name='Supertrend SELL',
             ), row=1, col=1)
 
     # EMAs
-    for col, color, name in [("EMA20", "#3fb950", "EMA 20"), ("EMA50", "#f85149", "EMA 50"), ("EMA200", "#d29922", "EMA 200")]:
+    for col, color, name, dash in [
+        ('EMA20', '#26a69a', 'EMA 20', 'solid'),
+        ('EMA50', '#ef5350', 'EMA 50', 'solid'),
+        ('EMA200', '#ffa726', 'EMA 200', 'dash'),
+    ]:
         if col in df.columns:
             s = df[col].dropna()
-            fig.add_trace(go.Scatter(x=s.index, y=s.values, line=dict(color=color, width=1.2), name=name), row=1, col=1)
+            fig.add_trace(go.Scatter(x=s.index, y=s.values,
+                line=dict(color=color, width=1.5, dash=dash), name=name), row=1, col=1)
 
     # VWAP
-    if "VWAP" in df.columns:
-        vwap_s = df["VWAP"].dropna()
+    if 'VWAP' in df.columns:
+        vwap_s = df['VWAP'].dropna()
         fig.add_trace(go.Scatter(x=vwap_s.index, y=vwap_s.values,
-            line=dict(color="#58a6ff", width=1.2, dash="dot"), name="VWAP"), row=1, col=1)
+            line=dict(color='#42a5f5', width=1.5, dash='dot'), name='VWAP'), row=1, col=1)
 
     # Current price line
-    fig.add_hline(y=current_price, line_color="#ffffff", line_width=2,
-        annotation_text=" Price $"+str(current_price),
-        annotation_position="right", annotation_font_color="#ffffff", row=1, col=1)
+    fig.add_hline(y=current_price, line_color='rgba(255,255,255,0.85)', line_width=1.5,
+                  annotation_text=' Price $'+str(current_price),
+                  annotation_position='right', annotation_font_color='#ffffff',
+                  annotation_font_size=11, row=1, col=1)
 
     # Support / Resistance
     for i, s in enumerate(support):
-        fig.add_hline(y=s, line_color="#3fb950", line_dash="dash", line_width=1,
-            annotation_text=" S"+str(i+1)+" $"+str(s),
-            annotation_position="right", annotation_font_color="#3fb950", row=1, col=1)
+        fig.add_hline(y=s, line_color='#26a69a', line_dash='dash', line_width=1,
+                      annotation_text=' S'+str(i+1)+' $'+str(s),
+                      annotation_position='right', annotation_font_color='#26a69a',
+                      annotation_font_size=10, row=1, col=1)
     for i, r in enumerate(resistance):
-        fig.add_hline(y=r, line_color="#f85149", line_dash="dash", line_width=1,
-            annotation_text=" R"+str(i+1)+" $"+str(r),
-            annotation_position="right", annotation_font_color="#f85149", row=1, col=1)
+        fig.add_hline(y=r, line_color='#ef5350', line_dash='dash', line_width=1,
+                      annotation_text=' R'+str(i+1)+' $'+str(r),
+                      annotation_position='right', annotation_font_color='#ef5350',
+                      annotation_font_size=10, row=1, col=1)
 
     # Fibonacci
     fib_cfg = [
-        ("ret_236", "#a371f7", "Fib 23.6%"), ("ret_382", "#a371f7", "Fib 38.2%"),
-        ("ret_500", "#58a6ff", "Fib 50%"), ("ret_618", "#a371f7", "Fib 61.8%"),
-        ("ret_786", "#a371f7", "Fib 78.6%"),
-        ("ext_1272", "#d29922", "Ext 127.2%"), ("ext_1618", "#d29922", "Ext 161.8%"),
+        ('ret_236', '#ab47bc', 'Fib 23.6%'), ('ret_382', '#ab47bc', 'Fib 38.2%'),
+        ('ret_500', '#42a5f5', 'Fib 50%'),   ('ret_618', '#ab47bc', 'Fib 61.8%'),
+        ('ret_786', '#ab47bc', 'Fib 78.6%'),
+        ('ext_1272', '#ffa726', 'Ext 127.2%'), ('ext_1618', '#ffa726', 'Ext 161.8%'),
     ]
     for key, color, label in fib_cfg:
         if key in fib:
-            fig.add_hline(y=fib[key], line_color=color, line_dash="dot", line_width=1,
-                annotation_text=" "+label+" $"+str(fib[key]),
-                annotation_position="left", annotation_font_color=color, row=1, col=1)
+            fig.add_hline(y=fib[key], line_color=color, line_dash='dot', line_width=0.8,
+                          annotation_text=' '+label+' $'+str(fib[key]),
+                          annotation_position='left', annotation_font_color=color,
+                          annotation_font_size=9, row=1, col=1)
 
-    # RSI panel
-    if "RSI" in df.columns:
-        rsi_s = df["RSI"].dropna()
-        fig.add_trace(go.Scatter(x=rsi_s.index, y=rsi_s.values,
-            line=dict(color="#58a6ff", width=1.5), name="RSI(14)"), row=2, col=1)
-    if "StochRSI_K" in df.columns:
-        sk = df["StochRSI_K"].dropna(); sd = df["StochRSI_D"].dropna()
-        fig.add_trace(go.Scatter(x=sk.index, y=sk.values,
-            line=dict(color="#d29922", width=1), name="StochRSI K"), row=2, col=1)
-        fig.add_trace(go.Scatter(x=sd.index, y=sd.values,
-            line=dict(color="#f85149", width=1, dash="dot"), name="StochRSI D"), row=2, col=1)
-    fig.add_hline(y=70, line_color="rgba(248,81,73,0.4)", line_dash="dot", line_width=1, row=2, col=1)
-    fig.add_hline(y=30, line_color="rgba(63,185,80,0.4)", line_dash="dot", line_width=1, row=2, col=1)
-    fig.add_hline(y=50, line_color="rgba(255,255,255,0.15)", line_dash="dot", line_width=1, row=2, col=1)
-
-    # Volume panel
+    # Volume panel (row 2)
     vol_colors = [
-        "rgba(63,185,80,0.33)" if float(c) >= float(o) else "rgba(248,81,73,0.33)"
-        for c, o in zip(df["Close"], df["Open"])
+        'rgba(38,166,154,0.5)' if float(c) >= float(o) else 'rgba(239,83,80,0.5)'
+        for c, o in zip(df['Close'], df['Open'])
     ]
-    fig.add_trace(go.Bar(x=df.index, y=df["Volume"], name="Volume",
-        marker_color=vol_colors, showlegend=False), row=3, col=1)
+    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='Volume',
+                         marker_color=vol_colors, showlegend=False), row=2, col=1)
+    vol_ma = df['Volume'].rolling(20).mean()
+    fig.add_trace(go.Scatter(x=vol_ma.index, y=vol_ma.values,
+        line=dict(color='#ffa726', width=1, dash='dot'), name='Vol MA20', showlegend=False), row=2, col=1)
 
+    # RSI + StochRSI panel (row 3)
+    if 'RSI' in df.columns:
+        rsi_s = df['RSI'].dropna()
+        fig.add_trace(go.Scatter(x=rsi_s.index, y=rsi_s.values,
+            line=dict(color='#42a5f5', width=1.5), name='RSI(14)'), row=3, col=1)
+    if 'StochRSI_K' in df.columns:
+        sk = df['StochRSI_K'].dropna(); sd = df['StochRSI_D'].dropna()
+        fig.add_trace(go.Scatter(x=sk.index, y=sk.values,
+            line=dict(color='#ffa726', width=1), name='StochRSI K'), row=3, col=1)
+        fig.add_trace(go.Scatter(x=sd.index, y=sd.values,
+            line=dict(color='#ef5350', width=1, dash='dot'), name='StochRSI D'), row=3, col=1)
+    fig.add_hrect(y0=70, y1=100, fillcolor='rgba(239,83,80,0.07)', line_width=0, row=3, col=1)
+    fig.add_hrect(y0=0, y1=30, fillcolor='rgba(38,166,154,0.07)', line_width=0, row=3, col=1)
+    fig.add_hline(y=70, line_color='rgba(239,83,80,0.5)', line_dash='dot', line_width=1, row=3, col=1)
+    fig.add_hline(y=30, line_color='rgba(38,166,154,0.5)', line_dash='dot', line_width=1, row=3, col=1)
+    fig.add_hline(y=50, line_color='rgba(255,255,255,0.15)', line_dash='dot', line_width=1, row=3, col=1)
+
+    # MACD panel (row 4)
+    if 'MACD' in df.columns:
+        macd_s = df['MACD'].dropna(); sig_s = df['MACD_Sig'].dropna()
+        hist_s = df['MACD_Hist'].dropna()
+        hist_colors = ['rgba(38,166,154,0.6)' if v >= 0 else 'rgba(239,83,80,0.6)' for v in hist_s.values]
+        fig.add_trace(go.Bar(x=hist_s.index, y=hist_s.values, name='MACD Hist',
+                             marker_color=hist_colors, showlegend=False), row=4, col=1)
+        fig.add_trace(go.Scatter(x=macd_s.index, y=macd_s.values,
+            line=dict(color='#42a5f5', width=1.5), name='MACD'), row=4, col=1)
+        fig.add_trace(go.Scatter(x=sig_s.index, y=sig_s.values,
+            line=dict(color='#ffa726', width=1, dash='dot'), name='Signal'), row=4, col=1)
+        fig.add_hline(y=0, line_color='rgba(255,255,255,0.2)', line_width=1, row=4, col=1)
+
+    # Layout
+    rangeselector_buttons = [
+        dict(count=1, label='1M', step='month', stepmode='backward'),
+        dict(count=3, label='3M', step='month', stepmode='backward'),
+        dict(count=6, label='6M', step='month', stepmode='backward'),
+        dict(step='all', label='All'),
+    ] if timeframe == 'Daily' else []
     fig.update_layout(
-        template="plotly_dark", paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
-        xaxis_rangeslider_visible=False, height=720,
-        margin=dict(l=10, r=140, t=20, b=10),
-        legend=dict(orientation="h", y=1.02, yanchor="bottom", font=dict(size=11), bgcolor="rgba(0,0,0,0)"),
-        hovermode="x unified",
+        template='plotly_dark',
+        paper_bgcolor='#0d1117',
+        plot_bgcolor='#0d1117',
+        xaxis_rangeslider_visible=False,
+        height=840,
+        margin=dict(l=10, r=150, t=25, b=10),
+        legend=dict(
+            orientation='h', y=1.02, yanchor='bottom',
+            font=dict(size=10, color='#c9d1d9'),
+            bgcolor='rgba(13,17,23,0.85)',
+            bordercolor='#30363d', borderwidth=1,
+        ),
+        hovermode='x unified',
+        hoverlabel=dict(bgcolor='#161b22', bordercolor='#30363d', font_color='#c9d1d9'),
+        spikedistance=-1,
     )
-    fig.update_xaxes(gridcolor="#1c2128", showgrid=True)
-    fig.update_yaxes(gridcolor="#1c2128", showgrid=True)
-    fig.update_yaxes(title_text="RSI", range=[0, 100], row=2, col=1)
-    fig.update_yaxes(title_text="Vol", row=3, col=1)
+    if rangeselector_buttons:
+        fig.update_xaxes(
+            rangeselector=dict(
+                buttons=rangeselector_buttons,
+                bgcolor='#161b22', activecolor='#1f6feb',
+                bordercolor='#30363d', font=dict(color='#c9d1d9', size=11),
+                x=0.0, y=1.18,
+            ), row=1, col=1,
+        )
+    fig.update_xaxes(gridcolor='#1c2128', showgrid=True, zeroline=False,
+                     showspikes=True, spikecolor='#42a5f5', spikethickness=1, spikedash='dot')
+    fig.update_yaxes(gridcolor='#1c2128', showgrid=True, zeroline=False)
+    fig.update_yaxes(title_text='USD/oz', tickformat='$,.2f', row=1, col=1)
+    fig.update_yaxes(title_text='Vol', row=2, col=1)
+    fig.update_yaxes(title_text='RSI', range=[0, 100], row=3, col=1)
+    fig.update_yaxes(title_text='MACD', row=4, col=1)
     return fig
 
+def tradingview_widget(symbol='COMEX:SI1!', theme='dark', height=580):
+    '''Embedded TradingView Advanced Chart for live silver price.'''
+    studies = [
+        'RSI@tv-basicstudies',
+        'MASimple@tv-basicstudies',
+        'MACD@tv-basicstudies',
+        'IchimokuCloud@tv-basicstudies',
+        'SuperTrend@tv-basicstudies',
+    ]
+    studies_json = '[' + ','.join('"' + s + '"' for s in studies) + ']'
+    overrides = {
+        'mainSeriesProperties.candleStyle.upColor': '#26a69a',
+        'mainSeriesProperties.candleStyle.downColor': '#ef5350',
+        'mainSeriesProperties.candleStyle.borderUpColor': '#26a69a',
+        'mainSeriesProperties.candleStyle.borderDownColor': '#ef5350',
+        'mainSeriesProperties.candleStyle.wickUpColor': '#26a69a',
+        'mainSeriesProperties.candleStyle.wickDownColor': '#ef5350',
+        'paneProperties.background': '#0d1117',
+        'paneProperties.backgroundType': 'solid',
+        'paneProperties.vertGridProperties.color': '#1c2128',
+        'paneProperties.horzGridProperties.color': '#1c2128',
+        'scalesProperties.textColor': '#c9d1d9',
+    }
+    import json as _json
+    ov_json = _json.dumps(overrides)
+    cid = 'tv_silver_chart'
+    html = f'''
+<div class="tradingview-widget-container" style="height:{height}px;width:100%;border-radius:8px;overflow:hidden;border:1px solid #30363d">
+  <div id="{cid}" style="height:100%;width:100%"></div>
+  <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+  <script type="text/javascript">
+  new TradingView.widget({{
+    "width": "100%",
+    "height": {height},
+    "symbol": "{symbol}",
+    "interval": "60",
+    "timezone": "Etc/UTC",
+    "theme": "{theme}",
+    "style": "1",
+    "locale": "en",
+    "toolbar_bg": "#0d1117",
+    "enable_publishing": false,
+    "hide_top_toolbar": false,
+    "hide_legend": false,
+    "hide_side_toolbar": true,
+    "allow_symbol_change": false,
+    "save_image": true,
+    "container_id": "{cid}",
+    "studies": {studies_json},
+    "overrides": {ov_json}
+  }});
+  </script>
+</div>'''
+    return html
+
+
+def tradingview_ticker_tape():
+    '''TradingView ticker tape for silver, gold, DXY, rates.'''
+    symbols = [
+        {'proName': 'COMEX:SI1!', 'title': 'Silver Futures'},
+        {'proName': 'TVC:SILVER', 'title': 'Silver Spot'},
+        {'proName': 'OANDA:XAGUSD', 'title': 'XAG/USD'},
+        {'proName': 'TVC:GOLD', 'title': 'Gold'},
+        {'proName': 'TVC:DXY', 'title': 'DXY'},
+        {'proName': 'TVC:US10Y', 'title': '10Y Yield'},
+    ]
+    import json as _json
+    sym_json = _json.dumps(symbols)
+    config = _json.dumps({
+        'symbols': symbols,
+        'showSymbolLogo': True,
+        'isTransparent': True,
+        'displayMode': 'adaptive',
+        'colorTheme': 'dark',
+        'locale': 'en',
+    })
+    return f'''<div class="tradingview-widget-container" style="margin-bottom:12px">
+<div class="tradingview-widget-container__widget"></div>
+<script type="text/javascript"
+ src="https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js" async>
+{config}
+</script></div>'''
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AI ANALYSIS — Anthropic via requests
@@ -944,16 +1084,38 @@ with sc2:
 
 st.divider()
 # Chart Section
-st.markdown("### 📊 Live Chart — Candlestick + Ichimoku + Supertrend + EMAs + RSI")
+st.markdown("### 📊 Live Chart — Candlestick + Ichimoku + Supertrend + EMAs + MACD + RSI")
 st.caption("Green/Red fill = Ichimoku Cloud · Dots = Supertrend · EMA 20/50/200 · VWAP · S/R · Fibonacci")
 
-tab_d, tab_h = st.tabs(["📅 Daily (6 months)", "⏱ Hourly (5 days)"])
+tab_d, tab_h, tab_tv = st.tabs(["📅 Daily (6 months)", "⏱ Hourly (5 days)", "📡 TradingView Live"])
 with tab_d:
-    fig_d = make_chart(snap["daily_df"].tail(120), snap["d_sup"], snap["d_res"], snap["fibs"], snap["price"])
+    fig_d = make_chart(snap["daily_df"].tail(120), snap["d_sup"], snap["d_res"], snap["fibs"], snap["price"], timeframe="Daily")
     st.plotly_chart(fig_d, use_container_width=True)
 with tab_h:
-    fig_h = make_chart(snap["hourly_df"], snap["h_sup"], snap["h_res"], snap["fibs"], snap["price"], show_ichimoku=False)
+    fig_h = make_chart(snap["hourly_df"], snap["h_sup"], snap["h_res"], snap["fibs"], snap["price"], show_ichimoku=False, timeframe="Hourly")
     st.plotly_chart(fig_h, use_container_width=True)
+with tab_tv:
+    st.markdown("#### 📡 TradingView Live Silver Chart")
+    st.caption("Live data from TradingView · COMEX:SI1! · Hourly candles · RSI, MACD, Ichimoku, SuperTrend overlays")
+    # Ticker tape
+    components.html(tradingview_ticker_tape(), height=60, scrolling=False)
+    # Main TradingView chart
+    tv_col1, tv_col2 = st.columns([3, 1])
+    with tv_col1:
+        tv_interval = st.selectbox(
+            "Interval",
+            ["5", "15", "30", "60", "240", "D", "W"],
+            index=3,
+            format_func=lambda x: {"5": "5 min", "15": "15 min", "30": "30 min",
+                                    "60": "1 Hour", "240": "4 Hour", "D": "Daily", "W": "Weekly"}.get(x, x),
+            key="tv_interval",
+        )
+    with tv_col2:
+        tv_height = st.slider("Chart Height", 400, 800, 580, 50, key="tv_height")
+    # Build widget with selected interval
+    tv_html = tradingview_widget(symbol="COMEX:SI1!", theme="dark", height=tv_height)
+    components.html(tv_html, height=tv_height + 30, scrolling=False)
+    st.caption("💡 TradingView chart includes live price, pre-built indicators and interactive tools.")
 
 st.divider()
 # Pro Indicators Table
