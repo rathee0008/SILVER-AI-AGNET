@@ -1325,7 +1325,8 @@ if show_etf_vflow:
             '<div><div style="font-size:12px;color:#8b949e">ETF FLOW BIAS (5-day)</div>'
             f'<div style="font-size:24px;font-weight:800;color:{bias_color}">{bias_icon} {bias_label}</div></div>'
             '</div></div>', unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)        etf_cols = st.columns(len(etf_summary))
+        st.markdown("<br>", unsafe_allow_html=True)
+        etf_cols = st.columns(len(etf_summary))
         for col_el, (sym, info) in zip(etf_cols, etf_summary.items()):
             flow = info["net_flow_5d"]
             flow_str = f"+${abs(flow):,.0f}" if flow > 0 else f"-${abs(flow):,.0f}"
