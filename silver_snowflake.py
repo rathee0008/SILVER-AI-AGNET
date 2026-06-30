@@ -1,9 +1,10 @@
 """
-Silver AI Trading Agent PRO v3 — Enhanced Edition
-==================================================
+Silver AI Trading Agent PRO v4 — ETF Volume Flow Edition
+=========================================================
 Features: Live COMEX Silver · Pro Technical Indicators · AI Analysis
 5-Model Price Forecasting · Risk Analytics · Correlation
 Gold/Silver Ratio · DXY Overlay · News Sentiment · Enhanced UI
+ETF Volume Flow: SLV · SIVR · PSLV · AGQ · ZSL
 """
 
 import json
@@ -38,7 +39,7 @@ def _get_secret():
     return None
 
 st.set_page_config(
-    page_title="Silver AI Trading Agent PRO v3",
+    page_title="Silver AI Trading Agent PRO v4",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -98,6 +99,14 @@ h1,h2,h3,h4 { color: #f0f6fc; }
     background: linear-gradient(135deg, #1a1f2e, #161b22);
     border: 1px solid #3d4f7c; border-radius:10px; padding:16px; text-align:center;
 }
+.etf-vflow-card {
+    background: linear-gradient(135deg, #1a2333, #161b22);
+    border: 1px solid #2d4a6b; border-radius:10px; padding:16px; margin:6px 0;
+}
+.etf-stat {
+    background:#0d1117; border:1px solid #21262d; border-radius:8px;
+    padding:10px 14px; text-align:center;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -115,8 +124,15 @@ YF_HDR = {
     "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://finance.yahoo.com/",
 }
+ETF_TICKERS = {
+    "SLV": "iShares Silver Trust",
+    "SIVR": "abrdn Physical Silver",
+    "PSLV": "Sprott Physical Silver",
+    "AGQ": "ProShares Ultra Silver (2x)",
+    "ZSL": "ProShares UltraShort Silver (Bear)",
+}
 
-# ── Data Fetching ────────────────────────────────────────────────────────────
+# ── Data Fetching ────────────────────────────────────────────
 def _yf_fetch(ticker, interval, range_, _retry=3):
     urls = [YF_BASE, YF_BASE2]
     last_exc = None
@@ -149,7 +165,7 @@ def _yf_fetch(ticker, interval, range_, _retry=3):
                 time.sleep(0.5 * (attempt + 1))
     raise RuntimeError(f"_yf_fetch failed: {last_exc}")
 
-# ── Pro Indicators ───────────────────────────────────────────────────────────
+# ── Pro Indicators ──────────────────────────────────────────
 def _ema(s, n): return s.ewm(span=n, adjust=False).mean()
 def _sma(s, n): return s.rolling(n).mean()
 
@@ -268,7 +284,7 @@ def enrich(df):
     df["Supertrend"],df["ST_Dir"] = _supertrend(df)
     return df
 
-# ── Signal Scoring ───────────────────────────────────────────────────────────
+# ── Signal Scoring ──────────────────────────────────────────
 def signal_score(snap):
     points = 0; max_pts = 0; breakdown = []
     def add(name, val, bull_cond, bear_cond, weight=1):
@@ -313,18 +329,20 @@ def signal_score(snap):
     macd_div=snap.get("d_macd_div") or "none"
     if rsi_div!="none": add("RSI Div",rsi_div.upper(), rsi_div=="bullish", rsi_div=="bearish")
     if macd_div!="none": add("MACD Div",macd_div.upper(), macd_div=="bullish", macd_div=="bearish")
-    # Gold/Silver ratio signal
     gs_ratio = snap.get("gs_ratio") or 0
     if gs_ratio > 0:
-        if gs_ratio > 80: add("G/S Ratio","Ratio="+str(round(gs_ratio,1)), True, False)  # high ratio = silver cheap
-        elif gs_ratio < 60: add("G/S Ratio","Ratio="+str(round(gs_ratio,1)), False, True)  # low ratio = silver expensive
+        if gs_ratio > 80: add("G/S Ratio","Ratio="+str(round(gs_ratio,1)), True, False)
+        elif gs_ratio < 60: add("G/S Ratio","Ratio="+str(round(gs_ratio,1)), False, True)
+    etf_bias = snap.get("etf_flow_bias") or "neutral"
+    if etf_bias == "inflow": add("ETF Flow","Inflow", True, False, weight=2)
+    elif etf_bias == "outflow": add("ETF Flow","Outflow", False, True, weight=2)
     score = round(points/max_pts*100) if max_pts else 50
     if score>=60: label,color="BULLISH","#3fb950"
     elif score<=40: label,color="BEARISH","#f85149"
     else: label,color="NEUTRAL","#d29922"
     return {"score":score,"label":label,"color":color,"breakdown":breakdown}
 
-# ── Support/Resistance + Fibonacci ───────────────────────────────────────────
+# ── Support/Resistance + Fibonacci ─────────────────────────────────
 def pivot_levels(df, n=5, top=3):
     h,l = df["High"].values, df["Low"].values
     res,sup = [],[]
@@ -343,10 +361,9 @@ def fibonacci(df):
             "ret_786":round(hi-0.786*d,3),
             "ext_1272":round(lo+1.272*d,3),"ext_1618":round(lo+1.618*d,3)}
 
-# ── Gold/Silver Ratio & DXY ───────────────────────────────────────────────────
+# ── Gold/Silver Ratio & DXY ──────────────────────────────────────────
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_gs_ratio_and_dxy():
-    """Fetch Gold price and DXY for ratio + correlation display."""
     result = {"gold_price": None, "dxy": None, "gs_ratio": None,
               "gold_daily": None, "dxy_daily": None}
     try:
@@ -363,10 +380,152 @@ def fetch_gs_ratio_and_dxy():
         pass
     return result
 
-# ── News Sentiment ────────────────────────────────────────────────────────────
+# ── ETF Volume Flow ────────────────────────────────────────────────
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_etf_vflow():
+    """Fetch daily OHLCV for silver ETFs and compute volume flow metrics."""
+    results = {}
+    for sym in ETF_TICKERS:
+        try:
+            df = _yf_fetch(sym, "1d", "3mo")
+            df = df.copy()
+            df["TP"] = (df["High"] + df["Low"] + df["Close"]) / 3
+            df["DollarVol"] = df["TP"] * df["Volume"]
+            df["OBV"] = _obv(df)
+            df["FlowSign"] = (df["Close"] >= df["Open"]).astype(int) * 2 - 1
+            df["DollarFlow"] = df["DollarVol"] * df["FlowSign"]
+            df["CumFlow"] = df["DollarFlow"].cumsum()
+            results[sym] = df
+        except Exception:
+            pass
+    if not results:
+        return "neutral", {}, {}
+    summary = {}
+    bear_etfs = {"ZSL"}
+    total_inflow = 0; total_outflow = 0
+    for sym, df in results.items():
+        last5 = df.tail(5)
+        net_flow_5d = last5["DollarFlow"].sum()
+        last_price = float(df["Close"].iloc[-1])
+        last_vol = float(df["Volume"].iloc[-1])
+        avg_vol = float(df["Volume"].tail(20).mean())
+        vol_ratio = round(last_vol / avg_vol, 2) if avg_vol > 0 else 0
+        pct_chg = float((df["Close"].iloc[-1] - df["Close"].iloc[-6]) / df["Close"].iloc[-6] * 100) if len(df) >= 6 else 0
+        is_bear = sym in bear_etfs
+        if net_flow_5d > 0 and not is_bear:
+            total_inflow += abs(net_flow_5d)
+        elif net_flow_5d > 0 and is_bear:
+            total_outflow += abs(net_flow_5d)
+        elif net_flow_5d < 0 and not is_bear:
+            total_outflow += abs(net_flow_5d)
+        elif net_flow_5d < 0 and is_bear:
+            total_inflow += abs(net_flow_5d)
+        summary[sym] = {
+            "price": round(last_price, 2),
+            "pct_chg_5d": round(pct_chg, 2),
+            "net_flow_5d": int(net_flow_5d),
+            "vol_ratio": vol_ratio,
+            "is_bear": is_bear,
+            "name": ETF_TICKERS[sym],
+        }
+    total = total_inflow + total_outflow
+    bias = "neutral"
+    if total > 0:
+        inflow_pct = total_inflow / total * 100
+        if inflow_pct >= 60: bias = "inflow"
+        elif inflow_pct <= 40: bias = "outflow"
+    return bias, summary, results
+
+# ── ETF VFlow Charts ──────────────────────────────────────────────
+def make_etf_vflow_chart(etf_dfs, selected_etfs=None):
+    """3-panel chart: Cumulative Flow, Daily Dollar Volume, ETF Price."""
+    if not etf_dfs:
+        return None
+    if selected_etfs is None:
+        selected_etfs = [s for s in ETF_TICKERS if s in etf_dfs and s != "ZSL"]
+    colors = {"SLV":"#c0c0c0","SIVR":"#58a6ff","PSLV":"#3fb950","AGQ":"#ffa726","ZSL":"#f85149"}
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
+                        row_heights=[0.4, 0.35, 0.25], vertical_spacing=0.04,
+                        subplot_titles=("Cumulative Dollar Flow (3mo)",
+                                        "Daily Dollar Volume (USD)",
+                                        "ETF Price"))
+    for sym in selected_etfs:
+        if sym not in etf_dfs:
+            continue
+        df = etf_dfs[sym].copy()
+        if df.index.tzinfo is not None:
+            df.index = df.index.tz_convert("UTC").tz_localize(None)
+        color = colors.get(sym, "#c0c0c0")
+        dash = "dash" if sym == "ZSL" else "solid"
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df["CumFlow"].values,
+            name=sym, line=dict(color=color, width=2, dash=dash),
+            hovertemplate=sym + " CumFlow: $%{y:,.0f}<extra></extra>"),
+            row=1, col=1)
+        fig.add_trace(go.Bar(
+            x=df.index, y=df["DollarVol"].values,
+            name=sym+" Vol", marker_color=color, opacity=0.65, showlegend=False,
+            hovertemplate=sym + ": $%{y:,.0f}<extra></extra>"),
+            row=2, col=1)
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df["Close"].values,
+            name=sym+" Price", line=dict(color=color, width=1.5, dash=dash),
+            showlegend=False,
+            hovertemplate=sym + ": $%{y:.2f}<extra></extra>"),
+            row=3, col=1)
+    fig.update_layout(
+        template="plotly_dark", paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+        height=640, margin=dict(l=10, r=60, t=40, b=10),
+        legend=dict(orientation="h", y=1.03, font=dict(size=11, color="#c9d1d9"),
+                    bgcolor="rgba(13,17,23,0.85)", bordercolor="#30363d", borderwidth=1),
+        hovermode="x unified", barmode="stack")
+    fig.update_xaxes(gridcolor="#1c2128", showgrid=True)
+    fig.update_yaxes(gridcolor="#1c2128", showgrid=True)
+    fig.update_yaxes(title_text="Cum Flow ($)", tickformat="$,.0f", row=1, col=1)
+    fig.update_yaxes(title_text="Vol ($)", tickformat="$,.0f", row=2, col=1)
+    fig.update_yaxes(title_text="Price ($)", tickformat="$,.2f", row=3, col=1)
+    fig.add_hline(y=0, line_color="rgba(255,255,255,0.2)", line_width=1, row=1, col=1)
+    return fig
+
+def make_etf_obv_chart(etf_dfs, selected_etfs=None):
+    """Normalized OBV comparison across ETFs."""
+    if not etf_dfs:
+        return None
+    if selected_etfs is None:
+        selected_etfs = [s for s in ETF_TICKERS if s in etf_dfs]
+    colors = {"SLV":"#c0c0c0","SIVR":"#58a6ff","PSLV":"#3fb950","AGQ":"#ffa726","ZSL":"#f85149"}
+    fig = go.Figure()
+    for sym in selected_etfs:
+        if sym not in etf_dfs:
+            continue
+        df = etf_dfs[sym].copy()
+        if df.index.tzinfo is not None:
+            df.index = df.index.tz_convert("UTC").tz_localize(None)
+        obv = df["OBV"]
+        obv_min, obv_max = obv.min(), obv.max()
+        if obv_max > obv_min:
+            obv_norm = (obv - obv_min) / (obv_max - obv_min) * 100
+        else:
+            obv_norm = obv * 0 + 50
+        color = colors.get(sym, "#c0c0c0")
+        dash = "dash" if sym == "ZSL" else "solid"
+        fig.add_trace(go.Scatter(
+            x=df.index, y=obv_norm.values,
+            name=sym, line=dict(color=color, width=2, dash=dash),
+            hovertemplate=sym + " OBV (norm): %{y:.1f}<extra></extra>"))
+    fig.update_layout(
+        template="plotly_dark", paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+        height=320, title="Normalized OBV Comparison (0=min, 100=max per ETF)",
+        margin=dict(l=10, r=60, t=50, b=10),
+        legend=dict(orientation="h", font=dict(size=11, color="#c9d1d9")),
+        yaxis=dict(title="OBV (normalized)", gridcolor="#1c2128", range=[0,100]),
+        xaxis=dict(gridcolor="#1c2128"),
+        hovermode="x unified")
+    return fig
+
+# ── News Sentiment ────────────────────────────────────────────────
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_news_sentiment():
-    """Fetch silver-related news via RSS and return headlines."""
     headlines = []
     feeds = [
         "https://feeds.finance.yahoo.com/rss/2.0/headline?s=SI=F&region=US&lang=en-US",
@@ -380,13 +539,12 @@ def fetch_news_sentiment():
                 titles = re.findall(r'<title><![CDATA[(.*?)]]></title>', r.text)
                 if not titles:
                     titles = re.findall(r'<title>(.*?)</title>', r.text)
-                for t in titles[1:6]:  # skip feed title
+                for t in titles[1:6]:
                     clean = re.sub(r'<[^>]+>', '', t).strip()
                     if clean and len(clean) > 10:
                         headlines.append(clean)
         except Exception:
             pass
-    # Score sentiment: simple keyword-based
     bullish_kw = ["surge","rally","rise","gain","bull","up","high","strong","buy","support","breakout","gold"]
     bearish_kw = ["fall","drop","decline","bear","low","weak","sell","pressure","breakdown","sell-off","crash"]
     scores = []
@@ -400,7 +558,7 @@ def fetch_news_sentiment():
     avg = sum(scores)/len(scores) if scores else 0
     return {"headlines": headlines[:8], "sentiment_score": round(avg,2), "count": len(headlines)}
 
-# ── Snapshot (cached 5 min) ───────────────────────────────────────────────────
+# ── Snapshot (cached 5 min) ────────────────────────────────────────────
 @st.cache_data(ttl=300, show_spinner=False)
 def load_snapshot():
     daily = enrich(_yf_fetch(TICKER,"1d","6mo"))
@@ -418,11 +576,15 @@ def load_snapshot():
     fibs = fibonacci(daily)
     rsi_div = _detect_divergence(daily["Close"], daily["RSI"])
     macd_div = _detect_divergence(daily["Close"], daily["MACD"])
-    # Gold/Silver ratio
     gs_data = fetch_gs_ratio_and_dxy()
     gs_ratio = None
     if gs_data["gold_price"] and price > 0:
         gs_ratio = round(gs_data["gold_price"] / price, 2)
+    # ETF flow bias
+    try:
+        etf_bias, _, _ = fetch_etf_vflow()
+    except Exception:
+        etf_bias = "neutral"
     def f(v,n=3):
         try: return round(float(v),n) if v is not None and not pd.isna(v) else None
         except: return None
@@ -452,9 +614,10 @@ def load_snapshot():
         gold_price=gs_data.get("gold_price"), dxy=gs_data.get("dxy"),
         gs_ratio=gs_ratio, gold_daily=gs_data.get("gold_daily"),
         dxy_daily=gs_data.get("dxy_daily"),
-          )
+        etf_flow_bias=etf_bias,
+    )
 
-# ── Price Predictor Functions ────────────────────────────────────────────────
+# ── Price Predictor Functions ──────────────────────────────────────────
 def run_forecasts(daily_df, forecast_days=7):
     close = daily_df["Close"].values
     n = len(close)
@@ -486,13 +649,10 @@ def run_forecasts(daily_df, forecast_days=7):
     sigma = vol_daily * close[-1]
     ci_upper = ensemble + 1.645 * sigma * np.sqrt(np.arange(1, forecast_days+1))
     ci_lower = ensemble - 1.645 * sigma * np.sqrt(np.arange(1, forecast_days+1))
-    return {
-        "future_dates": future_dates,
-        "lin_pred": lin_pred, "poly_pred": poly_pred,
-        "ma_pred": ma_pred, "exp_pred": exp_pred, "mom_pred": mom_pred,
-        "ensemble": ensemble, "ci_upper": ci_upper, "ci_lower": ci_lower,
-        "vol_daily": vol_daily, "close": close,
-    }
+    return {"future_dates":future_dates,"lin_pred":lin_pred,"poly_pred":poly_pred,
+            "ma_pred":ma_pred,"exp_pred":exp_pred,"mom_pred":mom_pred,
+            "ensemble":ensemble,"ci_upper":ci_upper,"ci_lower":ci_lower,
+            "vol_daily":vol_daily,"close":close}
 
 def get_correlation_data(period="1y"):
     tickers = {"Gold":"GC=F","USD Index":"DX-Y.NYB",
@@ -514,7 +674,7 @@ def get_correlation_data(period="1y"):
             pass
     return data
 
-# ── Live Monitoring ───────────────────────────────────────────────────────────
+# ── Live Monitoring ──────────────────────────────────────────────────
 def fetch_live_price():
     for interval, range_ in [("5m","1d"),("15m","5d")]:
         try:
@@ -596,6 +756,12 @@ def check_alerts(live, snap):
     gs_ratio = snap.get("gs_ratio") or 0
     if gs_ratio > 85: alerts.append({"level":"green","msg":f"Gold/Silver Ratio HIGH ({gs_ratio:.1f}) — Silver historically CHEAP"})
     elif gs_ratio > 0 and gs_ratio < 55: alerts.append({"level":"yellow","msg":f"Gold/Silver Ratio LOW ({gs_ratio:.1f}) — Silver historically EXPENSIVE"})
+    # ETF flow alerts
+    etf_bias = snap.get("etf_flow_bias") or "neutral"
+    if etf_bias == "inflow":
+        alerts.append({"level":"green","msg":"ETF Volume Flow: NET INFLOW — Bullish accumulation signal"})
+    elif etf_bias == "outflow":
+        alerts.append({"level":"red","msg":"ETF Volume Flow: NET OUTFLOW — Bearish distribution signal"})
     for lvl in snap.get("d_sup",[]):
         if abs(price-lvl)/lvl<0.003: alerts.append({"level":"green","msg":"Near Support $"+str(lvl)})
     for lvl in snap.get("d_res",[]):
@@ -604,28 +770,23 @@ def check_alerts(live, snap):
     if not alerts: alerts.append({"level":"green","msg":"No critical alerts — market normal"})
     return alerts
 
-# ── Chart ─────────────────────────────────────────────────────────────────────
+# ── Chart ────────────────────────────────────────────────────────────────────────────
 def make_chart(df, support, resistance, fib, current_price, show_ichimoku=True, timeframe="Daily",
                gold_df=None, dxy_df=None, show_gold=False, show_dxy=False):
     df = df.copy()
     if df.index.tzinfo is not None:
         df.index = df.index.tz_convert("UTC").tz_localize(None)
-
     rows = 4
     row_heights = [0.55,0.12,0.18,0.15]
     subplot_titles = ("","Volume","RSI / StochRSI","MACD")
-
     fig = make_subplots(rows=rows,cols=1,shared_xaxes=True,
                         row_heights=row_heights,vertical_spacing=0.02,
                         subplot_titles=subplot_titles)
-
     fig.add_trace(go.Candlestick(
         x=df.index,open=df["Open"],high=df["High"],low=df["Low"],close=df["Close"],
         name="Silver (SI=F)",
         increasing_line_color="#26a69a",increasing_fillcolor="#26a69a",
         decreasing_line_color="#ef5350",decreasing_fillcolor="#ef5350",line_width=1),row=1,col=1)
-
-    # Ichimoku Cloud
     if show_ichimoku and "Ichi_SenkouA" in df.columns:
         sa=df["Ichi_SenkouA"].dropna(); sb_v=df["Ichi_SenkouB"].dropna()
         cidx=sa.index.intersection(sb_v.index)
@@ -637,8 +798,6 @@ def make_chart(df, support, resistance, fib, current_price, show_ichimoku=True, 
                 line=dict(color="rgba(38,166,154,0.5)",width=1)),row=1,col=1)
             fig.add_trace(go.Scatter(x=sb_c.index,y=sb_c.values,name="Senkou B",
                 line=dict(color="rgba(239,83,80,0.5)",width=1),fill="tonexty",fillcolor=fill_c),row=1,col=1)
-
-    # Supertrend
     if "Supertrend" in df.columns and "ST_Dir" in df.columns:
         st_bull=df[df["ST_Dir"]==-1]["Supertrend"]
         st_bear=df[df["ST_Dir"]==1]["Supertrend"]
@@ -648,36 +807,27 @@ def make_chart(df, support, resistance, fib, current_price, show_ichimoku=True, 
         if not st_bear.empty:
             fig.add_trace(go.Scatter(x=st_bear.index,y=st_bear.values,mode="markers",
                 marker=dict(color="#ef5350",size=4,symbol="circle"),name="Supertrend SELL"),row=1,col=1)
-
-    # EMAs
     for col_,color,name,dash in [("EMA20","#26a69a","EMA 20","solid"),
-                                   ("EMA50","#ef5350","EMA 50","solid"),("EMA200","#ffa726","EMA 200","dash")]:
+                                  ("EMA50","#ef5350","EMA 50","solid"),("EMA200","#ffa726","EMA 200","dash")]:
         if col_ in df.columns:
             s=df[col_].dropna()
             fig.add_trace(go.Scatter(x=s.index,y=s.values,
                 line=dict(color=color,width=1.5,dash=dash),name=name),row=1,col=1)
-
     if "VWAP" in df.columns:
         vwap_s=df["VWAP"].dropna()
         fig.add_trace(go.Scatter(x=vwap_s.index,y=vwap_s.values,
             line=dict(color="#42a5f5",width=1.5,dash="dot"),name="VWAP"),row=1,col=1)
-
-    # Price line
     fig.add_hline(y=current_price,line_color="rgba(255,255,255,0.85)",line_width=1.5,
-                  annotation_text=" Price $"+str(current_price),annotation_position="right",
-                  annotation_font_color="#ffffff",annotation_font_size=11,row=1,col=1)
-
-    # Support/Resistance
+        annotation_text=" Price $"+str(current_price),annotation_position="right",
+        annotation_font_color="#ffffff",annotation_font_size=11,row=1,col=1)
     for i,s in enumerate(support):
         fig.add_hline(y=s,line_color="#26a69a",line_dash="dash",line_width=1,
-                      annotation_text=" S"+str(i+1)+" $"+str(s),annotation_position="right",
-                      annotation_font_color="#26a69a",annotation_font_size=10,row=1,col=1)
+            annotation_text=" S"+str(i+1)+" $"+str(s),annotation_position="right",
+            annotation_font_color="#26a69a",annotation_font_size=10,row=1,col=1)
     for i,r in enumerate(resistance):
         fig.add_hline(y=r,line_color="#ef5350",line_dash="dash",line_width=1,
-                      annotation_text=" R"+str(i+1)+" $"+str(r),annotation_position="right",
-                      annotation_font_color="#ef5350",annotation_font_size=10,row=1,col=1)
-
-    # Fibonacci
+            annotation_text=" R"+str(i+1)+" $"+str(r),annotation_position="right",
+            annotation_font_color="#ef5350",annotation_font_size=10,row=1,col=1)
     fib_cfg=[("ret_236","#ab47bc","Fib 23.6%"),("ret_382","#ab47bc","Fib 38.2%"),
              ("ret_500","#42a5f5","Fib 50%"),("ret_618","#ab47bc","Fib 61.8%"),
              ("ret_786","#ab47bc","Fib 78.6%"),
@@ -685,46 +835,39 @@ def make_chart(df, support, resistance, fib, current_price, show_ichimoku=True, 
     for key,color,label in fib_cfg:
         if key in fib:
             fig.add_hline(y=fib[key],line_color=color,line_dash="dot",line_width=0.8,
-                          annotation_text=" "+label+" $"+str(fib[key]),annotation_position="left",
-                          annotation_font_color=color,annotation_font_size=9,row=1,col=1)
-
-    # Volume
+                annotation_text=" "+label+" $"+str(fib[key]),annotation_position="left",
+                annotation_font_color=color,annotation_font_size=9,row=1,col=1)
     vol_colors=["rgba(38,166,154,0.5)" if float(c)>=float(o) else "rgba(239,83,80,0.5)"
                 for c,o in zip(df["Close"],df["Open"])]
     fig.add_trace(go.Bar(x=df.index,y=df["Volume"],name="Volume",
-                         marker_color=vol_colors,showlegend=False),row=2,col=1)
+        marker_color=vol_colors,showlegend=False),row=2,col=1)
     vol_ma=df["Volume"].rolling(20).mean()
     fig.add_trace(go.Scatter(x=vol_ma.index,y=vol_ma.values,
-                             line=dict(color="#ffa726",width=1,dash="dot"),name="Vol MA20",showlegend=False),row=2,col=1)
-
-    # RSI / StochRSI
+        line=dict(color="#ffa726",width=1,dash="dot"),name="Vol MA20",showlegend=False),row=2,col=1)
     if "RSI" in df.columns:
         rsi_s=df["RSI"].dropna()
         fig.add_trace(go.Scatter(x=rsi_s.index,y=rsi_s.values,
-                                 line=dict(color="#42a5f5",width=1.5),name="RSI(14)"),row=3,col=1)
+            line=dict(color="#42a5f5",width=1.5),name="RSI(14)"),row=3,col=1)
     if "StochRSI_K" in df.columns:
         sk=df["StochRSI_K"].dropna(); sd_v=df["StochRSI_D"].dropna()
         fig.add_trace(go.Scatter(x=sk.index,y=sk.values,
-                                 line=dict(color="#ffa726",width=1),name="StochRSI K"),row=3,col=1)
+            line=dict(color="#ffa726",width=1),name="StochRSI K"),row=3,col=1)
         fig.add_trace(go.Scatter(x=sd_v.index,y=sd_v.values,
-                                 line=dict(color="#ef5350",width=1,dash="dot"),name="StochRSI D"),row=3,col=1)
+            line=dict(color="#ef5350",width=1,dash="dot"),name="StochRSI D"),row=3,col=1)
     fig.add_hrect(y0=70,y1=100,fillcolor="rgba(239,83,80,0.07)",line_width=0,row=3,col=1)
     fig.add_hrect(y0=0,y1=30,fillcolor="rgba(38,166,154,0.07)",line_width=0,row=3,col=1)
     fig.add_hline(y=70,line_color="rgba(239,83,80,0.5)",line_dash="dot",line_width=1,row=3,col=1)
     fig.add_hline(y=30,line_color="rgba(38,166,154,0.5)",line_dash="dot",line_width=1,row=3,col=1)
-
-    # MACD
     if "MACD" in df.columns:
         macd_s=df["MACD"].dropna(); sig_s=df["MACD_Sig"].dropna(); hist_s=df["MACD_Hist"].dropna()
         hist_colors=["rgba(38,166,154,0.6)" if v>=0 else "rgba(239,83,80,0.6)" for v in hist_s.values]
         fig.add_trace(go.Bar(x=hist_s.index,y=hist_s.values,name="MACD Hist",
-                             marker_color=hist_colors,showlegend=False),row=4,col=1)
+            marker_color=hist_colors,showlegend=False),row=4,col=1)
         fig.add_trace(go.Scatter(x=macd_s.index,y=macd_s.values,
-                                 line=dict(color="#42a5f5",width=1.5),name="MACD"),row=4,col=1)
+            line=dict(color="#42a5f5",width=1.5),name="MACD"),row=4,col=1)
         fig.add_trace(go.Scatter(x=sig_s.index,y=sig_s.values,
-                                 line=dict(color="#ffa726",width=1,dash="dot"),name="Signal"),row=4,col=1)
-    fig.add_hline(y=0,line_color="rgba(255,255,255,0.2)",line_width=1,row=4,col=1)
-
+            line=dict(color="#ffa726",width=1,dash="dot"),name="Signal"),row=4,col=1)
+        fig.add_hline(y=0,line_color="rgba(255,255,255,0.2)",line_width=1,row=4,col=1)
     fig.update_layout(
         template="plotly_dark",paper_bgcolor="#0d1117",plot_bgcolor="#0d1117",
         xaxis_rangeslider_visible=False,height=840,margin=dict(l=10,r=150,t=25,b=10),
@@ -742,14 +885,12 @@ def make_chart(df, support, resistance, fib, current_price, show_ichimoku=True, 
     return fig
 
 def make_gs_ratio_chart(silver_df, gold_df):
-    """Gold/Silver ratio chart with historical context."""
     silver_df = silver_df.copy()
     gold_df = gold_df.copy()
     if silver_df.index.tzinfo is not None:
         silver_df.index = silver_df.index.tz_convert("UTC").tz_localize(None)
     if gold_df.index.tzinfo is not None:
         gold_df.index = gold_df.index.tz_convert("UTC").tz_localize(None)
-    # Align on common dates
     common = silver_df.index.intersection(gold_df.index)
     if len(common) < 5:
         return None
@@ -757,21 +898,20 @@ def make_gs_ratio_chart(silver_df, gold_df):
     ratio_ma20 = ratio.rolling(20).mean()
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=ratio.index, y=ratio.values,
-                             line=dict(color="#c0c0c0", width=2), name="G/S Ratio"))
+        line=dict(color="#c0c0c0", width=2), name="G/S Ratio"))
     fig.add_trace(go.Scatter(x=ratio_ma20.index, y=ratio_ma20.values,
-                             line=dict(color="#ffa726", width=1.5, dash="dot"), name="MA20"))
-    # Historical context bands
+        line=dict(color="#ffa726", width=1.5, dash="dot"), name="MA20"))
     fig.add_hrect(y0=80, y1=120, fillcolor="rgba(63,185,80,0.08)", line_width=0,
-                  annotation_text="Silver CHEAP zone (>80)", annotation_font_color="#3fb950",
-                  annotation_font_size=10)
+        annotation_text="Silver CHEAP zone (>80)", annotation_font_color="#3fb950",
+        annotation_font_size=10)
     fig.add_hrect(y0=0, y1=55, fillcolor="rgba(248,81,73,0.08)", line_width=0,
-                  annotation_text="Silver EXPENSIVE zone (<55)", annotation_font_color="#f85149",
-                  annotation_font_size=10)
+        annotation_text="Silver EXPENSIVE zone (<55)", annotation_font_color="#f85149",
+        annotation_font_size=10)
     fig.add_hline(y=80, line_color="#3fb950", line_dash="dash", line_width=1)
     fig.add_hline(y=55, line_color="#f85149", line_dash="dash", line_width=1)
     current_ratio = ratio.iloc[-1]
     fig.add_hline(y=current_ratio, line_color="white", line_width=1.5,
-                  annotation_text=f" Current: {current_ratio:.1f}", annotation_font_color="white")
+        annotation_text=f" Current: {current_ratio:.1f}", annotation_font_color="white")
     fig.update_layout(
         template="plotly_dark", paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
         height=300, title="Gold/Silver Ratio (6 months)",
@@ -781,7 +921,6 @@ def make_gs_ratio_chart(silver_df, gold_df):
     return fig
 
 def make_dxy_overlay_chart(silver_df, dxy_df):
-    """DXY vs Silver dual-axis chart showing inverse correlation."""
     silver_df = silver_df.copy()
     dxy_df = dxy_df.copy()
     if silver_df.index.tzinfo is not None:
@@ -793,11 +932,11 @@ def make_dxy_overlay_chart(silver_df, dxy_df):
         return None
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(go.Scatter(x=common, y=silver_df.loc[common, "Close"].values,
-                             line=dict(color="#c0c0c0", width=2), name="Silver (SI=F)"),
-                  secondary_y=False)
+        line=dict(color="#c0c0c0", width=2), name="Silver (SI=F)"),
+        secondary_y=False)
     fig.add_trace(go.Scatter(x=common, y=dxy_df.loc[common, "Close"].values,
-                             line=dict(color="#ffa726", width=1.5, dash="dot"), name="DXY (USD Index)"),
-                  secondary_y=True)
+        line=dict(color="#ffa726", width=1.5, dash="dot"), name="DXY (USD Index)"),
+        secondary_y=True)
     fig.update_layout(
         template="plotly_dark", paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
         height=300, title="Silver vs USD Index (Inverse Correlation)",
@@ -829,12 +968,12 @@ def tradingview_widget(symbol="OANDA:XAGUSD",theme="dark",height=580,interval="6
 <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
 <script type="text/javascript">
 new TradingView.widget({{
-    "width":"100%","height":{height},"symbol":"{symbol}","interval":"{interval}",
-    "timezone":"Etc/UTC","theme":"{theme}","style":"1","locale":"en",
-    "toolbar_bg":"#0d1117","enable_publishing":false,"hide_top_toolbar":false,
-    "hide_legend":false,"hide_side_toolbar":true,"allow_symbol_change":false,
-    "save_image":true,"container_id":"{cid}",
-    "studies":{studies_json},"overrides":{ov_json}
+"width":"100%","height":{height},"symbol":"{symbol}","interval":"{interval}",
+"timezone":"Etc/UTC","theme":"{theme}","style":"1","locale":"en",
+"toolbar_bg":"#0d1117","enable_publishing":false,"hide_top_toolbar":false,
+"hide_legend":false,"hide_side_toolbar":true,"allow_symbol_change":false,
+"save_image":true,"container_id":"{cid}",
+"studies":{studies_json},"overrides":{ov_json}
 }});
 </script></div>"""
 
@@ -849,12 +988,12 @@ def tradingview_ticker_tape():
     return f"""<div class="tradingview-widget-container" style="margin-bottom:12px">
 <div class="tradingview-widget-container__widget"></div>
 <script type="text/javascript"
-  src="https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js" async>
+src="https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js" async>
 {config}
 </script></div>"""
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_ai_analysis(price_key, api_key, gs_ratio=None, dxy=None, sentiment_score=None):
+def get_ai_analysis(price_key, api_key, gs_ratio=None, dxy=None, sentiment_score=None, etf_bias=None):
     snap = load_snapshot()
     fib = snap["fibs"]
     extra_context = ""
@@ -865,6 +1004,9 @@ def get_ai_analysis(price_key, api_key, gs_ratio=None, dxy=None, sentiment_score
     if sentiment_score is not None:
         sent_label = "Bullish" if sentiment_score > 0.2 else ("Bearish" if sentiment_score < -0.2 else "Neutral")
         extra_context += f"\nNews Sentiment Score: {sentiment_score:.2f} ({sent_label})"
+    if etf_bias:
+        etf_label = {"inflow":"Bullish accumulation","outflow":"Bearish distribution","neutral":"Mixed/neutral"}.get(etf_bias,"Mixed/neutral")
+        extra_context += f"\nETF Volume Flow Bias: {etf_bias.upper()} ({etf_label})"
     prompt = ("Analyze this live COMEX silver (SI=F) market snapshot and provide a complete pro-trader setup.\n\n"
               "=== PRICE ACTION ===\n"
               "Current: $"+str(snap["price"])+"/oz | 24h Change: "+str(snap["change_pct"])+"%\n"
@@ -889,11 +1031,11 @@ def get_ai_analysis(price_key, api_key, gs_ratio=None, dxy=None, sentiment_score
               + ("=== MACRO CONTEXT ===" + extra_context + "\n\n" if extra_context else "") +
               "Respond with: MARKET BIAS, BUY SETUP (entry/targets/SL/RR), SELL SETUP, KEY LEVELS, PATTERN/SIGNAL, RISK RATING, TRADER NOTE.")
     resp = requests.post("https://api.anthropic.com/v1/messages",
-                         headers={"x-api-key":api_key,"anthropic-version":"2023-06-01","content-type":"application/json"},
-                         json={"model":AI_MODEL,"max_tokens":2500,
-                               "system":"You are a senior COMEX silver futures trader. Give precise actionable setups. All prices USD/oz.",
-                               "messages":[{"role":"user","content":prompt}]},
-                         timeout=60)
+        headers={"x-api-key":api_key,"anthropic-version":"2023-06-01","content-type":"application/json"},
+        json={"model":AI_MODEL,"max_tokens":2500,
+              "system":"You are a senior COMEX silver futures trader. Give precise actionable setups. All prices USD/oz.",
+              "messages":[{"role":"user","content":prompt}]},
+        timeout=60)
     resp.raise_for_status()
     return resp.json()["content"][0]["text"]
 
@@ -931,26 +1073,27 @@ def gauge_html(value, max_val, label, color, suffix=""):
 # SIDEBAR
 # ══════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown("## ⚡ Silver AI Agent PRO v3")
+    st.markdown("## ⚡ Silver AI Agent PRO v4")
     st.caption("COMEX Silver Futures (SI=F)")
     st.divider()
     snowflake_key = _get_secret()
     if snowflake_key:
-        st.success("🔐 API key loaded from Snowflake Secret")
+        st.success("U0001f510 API key loaded from Snowflake Secret")
         api_key = snowflake_key
     else:
         api_key = st.text_input("Anthropic API Key", type="password",
                                 placeholder="sk-ant-…",
                                 help="Enter your API key to unlock AI analysis.")
     auto_refresh = st.toggle("Auto-refresh (5 min)", value=False)
-    run_btn = st.button("🔄 Refresh Now", use_container_width=True, type="primary")
+    run_btn = st.button("U0001f504 Refresh Now", use_container_width=True, type="primary")
     st.divider()
-    forecast_days = st.slider("📅 Forecast Days", 1, 30, 7)
+    forecast_days = st.slider("U0001f4c5 Forecast Days", 1, 30, 7)
     st.divider()
     st.markdown("**Chart Overlays**")
     show_gold_overlay = st.checkbox("Show Gold/Silver Ratio Chart", value=True)
     show_dxy_overlay = st.checkbox("Show DXY vs Silver Chart", value=True)
     show_news = st.checkbox("Show News Sentiment", value=True)
+    show_etf_vflow = st.checkbox("Show ETF Volume Flow", value=True)
     st.divider()
     st.markdown("**Indicators**")
     st.markdown("EMA 20/50/200 · RSI · StochRSI")
@@ -960,12 +1103,13 @@ with st.sidebar:
     st.markdown("Supertrend · Divergence Detection")
     st.markdown("Signal Score (composite 0-100)")
     st.markdown("Gold/Silver Ratio · DXY Overlay")
+    st.markdown("ETF Volume Flow (SLV/SIVR/PSLV/AGQ/ZSL)")
     st.divider()
     st.markdown("**Prediction Models**")
     st.markdown("Linear · Polynomial · MA · Exp Smoothing · Momentum → Ensemble")
     st.divider()
     if _IN_SNOWFLAKE:
-        st.caption("🏔 Running inside Snowflake")
+        st.caption("U0001f3d4 Running inside Snowflake")
     st.caption("Data: Yahoo Finance | AI: Claude")
     st.divider()
     st.warning("⚠️ Educational use only. Not financial advice.")
@@ -973,10 +1117,10 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN PAGE
 # ══════════════════════════════════════════════════════════════════════════════
-st.markdown("<h1 style=color:#f0f6fc;margin-bottom:0>⚡ Silver AI Trading Agent PRO v3</h1>",
+st.markdown("<h1 style=color:#f0f6fc;margin-bottom:0>⚡ Silver AI Trading Agent PRO v4</h1>",
             unsafe_allow_html=True)
 st.caption("Live COMEX Silver Futures (SI=F) · Updated "+datetime.now().strftime("%H:%M:%S")
-           +" · Enhanced: Gold/Silver Ratio · DXY Overlay · News Sentiment")
+           +" · New: ETF Volume Flow · Gold/Silver Ratio · DXY Overlay · News Sentiment")
 st.divider()
 
 if run_btn:
@@ -998,20 +1142,20 @@ chg = float(snap["change_pct"]) if snap.get("change_pct") is not None else 0.0
 chg_color = "bull" if chg >= 0 else "bear"
 arrow = "▲" if chg >= 0 else "▼"
 
-# ── Top Metric Cards ──────────────────────────────────────────────────────────
+# ── Top Metric Cards ──────────────────────────────────────────────────────────────────────
 c1,c2,c3,c4,c5,c6 = st.columns(6)
 gs_ratio = snap.get("gs_ratio")
 gold_price = snap.get("gold_price")
 dxy_val = snap.get("dxy")
 
 cards = [
-    ("💰 SILVER / OZ","$"+str(p), arrow+" "+str(abs(chg))+"%", chg_color),
-    ("📅 Prev Close","$"+str(snap["prev_close"]),"Day: "+str(snap["d_low"])+" – "+str(snap["d_high"]),"neut"),
-    ("📊 Week Range",str(snap["week_low"]),"↑ "+str(snap["week_high"]),"neut"),
-    ("📆 Month Range",str(snap["month_low"]),"↑ "+str(snap["month_high"]),"neut"),
-    ("🥇 Gold Price","$"+str(round(gold_price,2)) if gold_price else "—",
+    ("U0001f4b0 SILVER / OZ","$"+str(p), arrow+" "+str(abs(chg))+"%", chg_color),
+    ("U0001f4c5 Prev Close","$"+str(snap["prev_close"]),"Day: "+str(snap["d_low"])+" – "+str(snap["d_high"]),"neut"),
+    ("U0001f4ca Week Range",str(snap["week_low"]),"↑ "+str(snap["week_high"]),"neut"),
+    ("U0001f4c6 Month Range",str(snap["month_low"]),"↑ "+str(snap["month_high"]),"neut"),
+    ("U0001f947 Gold Price","$"+str(round(gold_price,2)) if gold_price else "—",
      "G/S Ratio: "+str(gs_ratio) if gs_ratio else "Loading…","neut"),
-    ("💵 DXY (USD)","$"+str(round(dxy_val,2)) if dxy_val else "—",
+    ("U0001f4b5 DXY (USD)","$"+str(round(dxy_val,2)) if dxy_val else "—",
      "Inverse corr w/ Silver","neut"),
 ]
 for col,(label,val,sub,sc) in zip([c1,c2,c3,c4,c5,c6],cards):
@@ -1019,48 +1163,49 @@ for col,(label,val,sub,sc) in zip([c1,c2,c3,c4,c5,c6],cards):
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# ── Gold/Silver Ratio Card ────────────────────────────────────────────────────
+# ── Gold/Silver Ratio Card ─────────────────────────────────────────────────────────────────────────────
 if gs_ratio:
     gs_color = "#3fb950" if gs_ratio > 80 else "#f85149" if gs_ratio < 55 else "#d29922"
     gs_label = "Silver CHEAP — Contrarian BUY Zone" if gs_ratio > 80 else ("Silver EXPENSIVE" if gs_ratio < 55 else "Normal Range")
     st.markdown(f'''<div class="ratio-card" style="margin-bottom:16px">
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
-        <div>
-            <div style="font-size:13px;color:#8b949e">⚖️ Gold / Silver Ratio</div>
-            <div style="font-size:36px;font-weight:800;color:{gs_color}">{gs_ratio:.1f}</div>
-            <div style="font-size:13px;color:{gs_color}">{gs_label}</div>
-        </div>
-        <div style="font-size:13px;color:#8b949e;max-width:400px;line-height:1.6">
-            Historically, ratio above 80 means silver is undervalued vs gold — a classic contrarian entry signal.
-            Ratio below 55 suggests silver is expensive relative to gold.
-            <br><b style="color:#c9d1d9">Current: {gs_ratio:.1f}x</b>
-        </div>
-    </div>
-    </div>''', unsafe_allow_html=True)
+<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+<div>
+<div style="font-size:13px;color:#8b949e">⚖️ Gold / Silver Ratio</div>
+<div style="font-size:36px;font-weight:800;color:{gs_color}">{gs_ratio:.1f}</div>
+<div style="font-size:13px;color:{gs_color}">{gs_label}</div>
+</div>
+<div style="font-size:13px;color:#8b949e;max-width:400px;line-height:1.6">
+Historically, ratio above 80 means silver is undervalued vs gold — a classic contrarian entry signal.
+Ratio below 55 suggests silver is expensive relative to gold.
+<br><b style="color:#c9d1d9">Current: {gs_ratio:.1f}x</b>
+</div>
+</div>
+</div>''', unsafe_allow_html=True)
 
-# ── News Sentiment ────────────────────────────────────────────────────────────
+# ── News Sentiment Display ────────────────────────────────────────────────────────────────
+news_data = {}
 if show_news:
     with st.spinner("Fetching news sentiment…"):
         news_data = fetch_news_sentiment()
-    if news_data["headlines"]:
+    if news_data.get("headlines"):
         sent = news_data["sentiment_score"]
         sent_color = "#3fb950" if sent > 0.2 else "#f85149" if sent < -0.2 else "#d29922"
         sent_label = "BULLISH" if sent > 0.2 else "BEARISH" if sent < -0.2 else "NEUTRAL"
-        with st.expander(f"📰 News Sentiment: {sent_label} ({sent:+.2f}) — {news_data['count']} headlines", expanded=False):
+        with st.expander(f"U0001f4f0 News Sentiment: {sent_label} ({sent:+.2f}) — {news_data['count']} headlines", expanded=False):
             st.markdown(f'<div style="margin-bottom:8px"><span style="color:{sent_color};font-weight:700;font-size:16px">{sent_label}</span>'
                         f'<span style="color:#8b949e;font-size:12px;margin-left:8px">Sentiment Score: {sent:+.2f}</span></div>',
                         unsafe_allow_html=True)
-            for h in news_data["headlines"]:
+            for h in news_data.get("headlines",[]):
                 h_lower = h.lower()
                 bullish_kw = ["surge","rally","rise","gain","bull","up","high","strong","buy","support","breakout"]
                 bearish_kw = ["fall","drop","decline","bear","low","weak","sell","pressure","breakdown"]
                 bull = sum(1 for k in bullish_kw if k in h_lower)
                 bear_c = sum(1 for k in bearish_kw if k in h_lower)
-                dot = "🟢" if bull > bear_c else "🔴" if bear_c > bull else "⚪"
+                dot = "U0001f7e2" if bull > bear_c else "U0001f534" if bear_c > bull else "⚪"
                 st.markdown(f'<div class="news-card">{dot} {h}</div>', unsafe_allow_html=True)
 
-# ── Signal Score ──────────────────────────────────────────────────────────────
-st.markdown("### 🎯 Signal Score — Composite Indicator Consensus")
+# ── Signal Score ───────────────────────────────────────────────────────────────────────────────
+st.markdown("### U0001f3af Signal Score — Composite Indicator Consensus")
 scoring = signal_score(snap)
 sc1, sc2 = st.columns([1, 2])
 with sc1:
@@ -1072,7 +1217,6 @@ with sc1:
                   +scoring["label"]+'</div></div>')
     st.markdown(score_html, unsafe_allow_html=True)
     st.markdown(score_bar_html(scoring["score"],scoring["color"]), unsafe_allow_html=True)
-    # Plotly gauge for better visual
     fig_gauge = go.Figure(go.Indicator(
         mode="gauge+number",
         value=scoring["score"],
@@ -1095,7 +1239,6 @@ with sc1:
         template="plotly_dark",paper_bgcolor="#0d1117",plot_bgcolor="#0d1117",
         height=200,margin=dict(l=20,r=20,t=20,b=0))
     st.plotly_chart(fig_gauge, use_container_width=True)
-
 with sc2:
     st.markdown("**Indicator Breakdown**")
     breakdown = scoring["breakdown"]
@@ -1109,11 +1252,10 @@ with sc2:
                          '<div style="font-size:11px;color:#6e7681">'+str(val)+'</div></div>',
                          unsafe_allow_html=True)
 st.divider()
-
-# ── Chart Section ─────────────────────────────────────────────────────────────
-st.markdown("### 📊 Live Chart — Candlestick + Ichimoku + Supertrend + EMAs + MACD + RSI")
+# ── Chart Section ──────────────────────────────────────────────────────────────────────────────
+st.markdown("### U0001f4ca Live Chart — Candlestick + Ichimoku + Supertrend + EMAs + MACD + RSI")
 st.caption("Green/Red fill = Ichimoku Cloud · Dots = Supertrend · EMA 20/50/200 · VWAP · S/R · Fibonacci")
-tab_d,tab_h,tab_tv = st.tabs(["📅 Daily (6 months)","⏱ Hourly (5 days)","📡 TradingView Live"])
+tab_d,tab_h,tab_tv = st.tabs(["U0001f4c5 Daily (6 months)","⏱ Hourly (5 days)","U0001f4e1 TradingView Live"])
 with tab_d:
     fig_d = make_chart(snap["daily_df"].tail(120),snap["d_sup"],snap["d_res"],
                        snap["fibs"],snap["price"],timeframe="Daily")
@@ -1123,22 +1265,21 @@ with tab_h:
                        snap["fibs"],snap["price"],show_ichimoku=False,timeframe="Hourly")
     st.plotly_chart(fig_h, use_container_width=True)
 with tab_tv:
-    st.markdown("#### 📡 TradingView Live Silver Chart")
-    st.caption("Live data from TradingView · COMEX:SI1! · Hourly candles · RSI, MACD, Ichimoku, SuperTrend")
+    st.markdown("⁠#### U0001f4e1 TradingView Live Silver Chart")
+    st.caption("Live data from TradingView · COMEX:SI1! · Hourly candles")
     components.html(tradingview_ticker_tape(), height=60, scrolling=False)
     tv_col1,tv_col2 = st.columns([3,1])
     with tv_col1:
         tv_interval = st.selectbox("Interval",["5","15","30","60","240","D","W"],index=3,
-                                   format_func=lambda x: {"5":"5 min","15":"15 min","30":"30 min","60":"1 Hour",
-                                                          "240":"4 Hour","D":"Daily","W":"Weekly"}.get(x,x),
-                                   key="tv_interval")
+            format_func=lambda x: {"5":"5 min","15":"15 min","30":"30 min","60":"1 Hour",
+                                   "240":"4 Hour","D":"Daily","W":"Weekly"}.get(x,x),
+            key="tv_interval")
     with tv_col2:
         tv_height = st.slider("Chart Height",400,800,580,50,key="tv_height")
     tv_html = tradingview_widget(symbol="OANDA:XAGUSD",theme="dark",height=tv_height,interval=tv_interval)
     components.html(tv_html, height=tv_height+30, scrolling=False)
 st.divider()
-
-# ── Gold/Silver Ratio & DXY Charts ───────────────────────────────────────────
+# ── Gold/Silver Ratio & DXY Charts ───────────────────────────────────────────────────────────
 if show_gold_overlay or show_dxy_overlay:
     st.markdown("### ⚖️ Macro Context — Gold/Silver Ratio & USD Index")
     col_gs, col_dxy = st.columns(2)
@@ -1162,8 +1303,81 @@ if show_gold_overlay or show_dxy_overlay:
             st.caption("Enable 'Show DXY vs Silver Chart' in sidebar")
     st.divider()
 
-# ── Pro Indicators Table ──────────────────────────────────────────────────────
-st.markdown("### 📈 Pro Technical Indicators — Multi-Timeframe")
+# ── ETF Volume Flow Section ───────────────────────────────────────────────────────────────
+if show_etf_vflow:
+    st.markdown("### U0001f4ca Silver ETF Volume Flow — SLV · SIVR · PSLV · AGQ · ZSL")
+    st.caption("Cumulative dollar flow, daily volume, OBV comparison · 3-month window · ZSL = inverse/bear ETF")
+    with st.spinner("Fetching ETF volume flow data…"):
+        try:
+            etf_bias, etf_summary, etf_dfs = fetch_etf_vflow()
+        except Exception as e:
+            st.warning(f"ETF flow data unavailable: {e}")
+            etf_bias, etf_summary, etf_dfs = "neutral", {}, {}
+    if etf_summary:
+        bias_colors = {"inflow":"#3fb950","outflow":"#f85149","neutral":"#d29922"}
+        bias_color = bias_colors.get(etf_bias,"#d29922")
+        bias_icons = {"inflow":"U0001f7e2","outflow":"U0001f534","neutral":"⚪"}
+        bias_icon = bias_icons.get(etf_bias,"⚪")
+        bias_labels = {"inflow":"NET INFLOW — Bullish Accumulation","outflow":"NET OUTFLOW — Bearish Distribution","neutral":"MIXED / NEUTRAL"}
+        bias_label = bias_labels.get(etf_bias,"NEUTRAL")
+        st.markdown(
+            '<div class="etf-vflow-card"><div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">'
+            '<div><div style="font-size:12px;color:#8b949e">ETF FLOW BIAS (5-day)</div>'
+            f'<div style="font-size:24px;font-weight:800;color:{bias_color}">{bias_icon} {bias_label}</div></div>'
+            '</div></div>', unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)        etf_cols = st.columns(len(etf_summary))
+        for col_el, (sym, info) in zip(etf_cols, etf_summary.items()):
+            flow = info["net_flow_5d"]
+            flow_str = f"+${abs(flow):,.0f}" if flow > 0 else f"-${abs(flow):,.0f}"
+            flow_col_map = {}
+            if (flow > 0 and info["is_bear"]) or (flow < 0 and not info["is_bear"]):
+                flow_color = "#f85149"
+            elif flow != 0:
+                flow_color = "#3fb950"
+            else:
+                flow_color = "#d29922"
+            pct_str = f"{info['pct_chg_5d']:+.1f}%"
+            pct_color = "#f85149" if info["pct_chg_5d"] < 0 else "#3fb950"
+            bear_tag = ' <span style="color:#f85149;font-size:10px">[BEAR]</span>' if info["is_bear"] else ""
+            col_el.markdown(
+                '<div class="etf-stat">'
+                f'<div style="font-size:13px;font-weight:700;color:#f0f6fc">{sym}{bear_tag}</div>'
+                f'<div style="font-size:11px;color:#8b949e;margin-bottom:6px">{info["name"][:20]}</div>'
+                f'<div style="font-size:18px;font-weight:700;color:#f0f6fc">${info["price"]}</div>'
+                f'<div style="font-size:12px;color:{pct_color}">{pct_str} 5d</div>'
+                f'<div style="font-size:11px;color:{flow_color};margin-top:4px">Flow: {flow_str}</div>'
+                f'<div style="font-size:11px;color:#8b949e">Vol: {info["vol_ratio"]}x avg</div>'
+                '</div>',
+                unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+        etf_tab1, etf_tab2 = st.tabs(["U0001f4ca Volume Flow Chart", "U0001f4c8 OBV Comparison"])
+        with etf_tab1:
+            etf_select = st.multiselect(
+                "Select ETFs to display:",
+                options=list(etf_dfs.keys()),
+                default=[s for s in ["SLV","SIVR","PSLV"] if s in etf_dfs],
+                key="etf_vflow_select")
+            if etf_select:
+                fig_etf = make_etf_vflow_chart(etf_dfs, selected_etfs=etf_select)
+                if fig_etf:
+                    st.plotly_chart(fig_etf, use_container_width=True)
+            else:
+                st.caption("Select at least one ETF above.")
+        with etf_tab2:
+            etf_obv_select = st.multiselect(
+                "Select ETFs for OBV:",
+                options=list(etf_dfs.keys()),
+                default=list(etf_dfs.keys()),
+                key="etf_obv_select")
+            if etf_obv_select:
+                fig_obv = make_etf_obv_chart(etf_dfs, selected_etfs=etf_obv_select)
+                if fig_obv:
+                    st.plotly_chart(fig_obv, use_container_width=True)
+    else:
+        st.warning("ETF volume flow data unavailable. Check internet connection.")
+    st.divider()
+# ── Pro Indicators Table ───────────────────────────────────────────────────────────────────────────
+st.markdown("### U0001f4c8 Pro Technical Indicators — Multi-Timeframe")
 left,right = st.columns(2)
 def ind_row(name,val_str,sig_label,sig_kind):
     r1,r2,r3 = st.columns([1.2,1.6,1.0])
@@ -1231,15 +1445,17 @@ with right:
     div_display=" | ".join(div_text) if div_text else "none detected"
     div_kind="bull" if "bullish" in (rsi_div+macd_div) else "bear" if "bearish" in (rsi_div+macd_div) else "neut"
     ind_row("Divergence",div_display,"DETECTED" if div_text else "NONE",div_kind)
-    # Gold/Silver Ratio indicator
     if gs_ratio:
         gs_lbl = "SILVER CHEAP" if gs_ratio > 80 else ("SILVER EXPENSIVE" if gs_ratio < 55 else "NORMAL")
         gs_kind = "bull" if gs_ratio > 80 else "bear" if gs_ratio < 55 else "neut"
         ind_row("G/S Ratio","Ratio: "+str(gs_ratio),gs_lbl,gs_kind)
+    etf_bias_snap = snap.get("etf_flow_bias") or "neutral"
+    etf_bias_lbl = {"inflow":"NET INFLOW","outflow":"NET OUTFLOW","neutral":"NEUTRAL"}.get(etf_bias_snap,"NEUTRAL")
+    etf_bias_kind = {"inflow":"bull","outflow":"bear","neutral":"neut"}.get(etf_bias_snap,"neut")
+    ind_row("ETF Volume Flow",etf_bias_snap.upper(),etf_bias_lbl,etf_bias_kind)
 st.divider()
-
-# ── Multi-Timeframe Confluence Table ──────────────────────────────────────────
-st.markdown("### 🔀 Multi-Timeframe Confluence Table")
+# ── Multi-Timeframe Confluence Table ───────────────────────────────────────────────────────────
+st.markdown("### U0001f500 Multi-Timeframe Confluence Table")
 def tf_signal(rsi,stochrsi_k,wr,macd,macd_sig,adx,pdi,mdi):
     bulls=0; bears=0
     if rsi and rsi<50: bulls+=1
@@ -1265,53 +1481,53 @@ h_sig,h_col=tf_signal(snap.get("h_rsi"),snap.get("h_stochrsi_k"),snap.get("h_wr"
 d_macd_arrow="▲" if (snap.get("d_macd") or 0)>(snap.get("d_macd_sig") or 0) else "▼"
 h_macd_arrow="▲" if (snap.get("h_macd") or 0)>(snap.get("h_macd_sig") or 0) else "▼"
 table_html=('<table class="conf-table">'
-            '<tr><th>Timeframe</th><th>RSI(14)</th><th>StochRSI K</th><th>Williams %R</th><th>CCI</th><th>ADX</th><th>MACD</th><th>Consensus</th></tr>'
-            '<tr><td><b>Daily</b></td>'
-            '<td>'+str(snap.get("d_rsi") or "—")+'</td>'
-            '<td>'+str(snap.get("d_stochrsi_k") or "—")+'</td>'
-            '<td>'+str(snap.get("d_wr") or "—")+'</td>'
-            '<td>'+str(snap.get("d_cci") or "—")+'</td>'
-            '<td>'+str(snap.get("d_adx") or "—")+'</td>'
-            '<td>'+d_macd_arrow+'</td>'
-            '<td style="color:'+d_col+';font-weight:700">'+d_sig+'</td></tr>'
-            '<tr><td><b>Hourly</b></td>'
-            '<td>'+str(snap.get("h_rsi") or "—")+'</td>'
-            '<td>'+str(snap.get("h_stochrsi_k") or "—")+'</td>'
-            '<td>'+str(snap.get("h_wr") or "—")+'</td>'
-            '<td>'+str(snap.get("h_cci") or "—")+'</td>'
-            '<td>'+str(snap.get("h_adx") or "—")+'</td>'
-            '<td>'+h_macd_arrow+'</td>'
-            '<td style="color:'+h_col+';font-weight:700">'+h_sig+'</td></tr>'
-            '</table>')
+'<tr><th>Timeframe</th><th>RSI(14)</th><th>StochRSI K</th><th>Williams %R</th><th>CCI</th><th>ADX</th><th>MACD</th><th>Consensus</th></tr>'
+'<tr><td><b>Daily</b></td>'
+'<td>'+str(snap.get("d_rsi") or "—")+'</td>'
+'<td>'+str(snap.get("d_stochrsi_k") or "—")+'</td>'
+'<td>'+str(snap.get("d_wr") or "—")+'</td>'
+'<td>'+str(snap.get("d_cci") or "—")+'</td>'
+'<td>'+str(snap.get("d_adx") or "—")+'</td>'
+'<td>'+d_macd_arrow+'</td>'
+'<td style="color:'+d_col+';font-weight:700">'+d_sig+'</td></tr>'
+'<tr><td><b>Hourly</b></td>'
+'<td>'+str(snap.get("h_rsi") or "—")+'</td>'
+'<td>'+str(snap.get("h_stochrsi_k") or "—")+'</td>'
+'<td>'+str(snap.get("h_wr") or "—")+'</td>'
+'<td>'+str(snap.get("h_cci") or "—")+'</td>'
+'<td>'+str(snap.get("h_adx") or "—")+'</td>'
+'<td>'+h_macd_arrow+'</td>'
+'<td style="color:'+h_col+';font-weight:700">'+h_sig+'</td></tr>'
+'</table>')
 st.markdown(table_html, unsafe_allow_html=True)
 st.divider()
-# ── Key Levels + Ichimoku ──────────────────────────────────────────────────
+# ── Key Levels + Ichimoku ──────────────────────────────────────────────────────────────────────
 left2,right2 = st.columns(2)
 with left2:
-    st.markdown("### 🔑 Key Price Levels")
+    st.markdown("### U0001f511 Key Price Levels")
     fib=snap["fibs"]
-    st.markdown("**🔴 Resistance**")
+    st.markdown("**U0001f534 Resistance**")
     if snap["d_res"]:
-        res_badges = " ".join([f'<span class="level-badge res-badge">${{v}}</span>' for v in snap["d_res"]])
+        res_badges = ' '.join(['<span class="level-badge res-badge">$'+str(v)+'</span>' for v in snap["d_res"]])
         st.markdown(res_badges, unsafe_allow_html=True)
     else:
         st.caption("No daily resistance above price")
-    st.markdown("**🟢 Support**")
+    st.markdown("**U0001f7e2 Support**")
     if snap["d_sup"]:
-        sup_badges = " ".join([f'<span class="level-badge sup-badge">${{v}}</span>' for v in snap["d_sup"]])
+        sup_badges = ' '.join(['<span class="level-badge sup-badge">$'+str(v)+'</span>' for v in snap["d_sup"]])
         st.markdown(sup_badges, unsafe_allow_html=True)
     else:
         st.caption("Price below all pivots — watch Fib extensions")
-    st.markdown("**🔵 Fibonacci (60-day swing)**")
+    st.markdown("**U0001f535 Fibonacci (60-day swing)**")
     st.caption("Swing Low: $"+str(fib["swing_low"])+" → Swing High: $"+str(fib["swing_high"]))
     for label_,val in [("23.6%",fib["ret_236"]),("38.2%",fib["ret_382"]),
-                        ("50.0%",fib["ret_500"]),("61.8%",fib["ret_618"]),("78.6%",fib["ret_786"]),
-                        ("Ext 127.2%",fib["ext_1272"]),("Ext 161.8%",fib["ext_1618"])]:
+                       ("50.0%",fib["ret_500"]),("61.8%",fib["ret_618"]),("78.6%",fib["ret_786"]),
+                       ("Ext 127.2%",fib["ext_1272"]),("Ext 161.8%",fib["ext_1618"])]:
         a,b = st.columns([1,1.5])
         a.caption(label_)
         b.markdown(badge(val,"fib"), unsafe_allow_html=True)
 with right2:
-    st.markdown("### 🌐 Ichimoku Cloud Levels")
+    st.markdown("### U0001f310 Ichimoku Cloud Levels")
     st.markdown("**Tenkan-sen (9)**")
     st.markdown(badge(snap.get("d_ichi_tenkan") or "—","fib"), unsafe_allow_html=True)
     st.markdown("**Kijun-sen (26)**")
@@ -1324,9 +1540,8 @@ with right2:
     st_badge_kind="sup" if snap.get("d_st_dir")==-1 else "res"
     st.markdown(badge(snap.get("d_supertrend") or "—",st_badge_kind), unsafe_allow_html=True)
 st.divider()
-
-# ── Live Data Monitoring ────────────────────────────────────────────
-st.markdown("### 🟢 Live Data Monitoring System")
+# ── Live Data Monitoring ────────────────────────────────────────────────────────────────────
+st.markdown("### U0001f7e2 Live Data Monitoring System")
 st.caption("Real-time 5-min tick · Smart Alerts · Session Stats · Volume Analysis · Momentum Gauges")
 live = fetch_live_price()
 if not live:
@@ -1343,61 +1558,60 @@ else:
                 '<div class="metric-sub">'+sub+'</div></div>')
     m1,m2,m3,m4,m5,m6 = st.columns(6)
     m1.markdown(mon_card("⚡ LIVE PRICE","$"+str(live["price"]),
-                         tick_arrow+" "+str(live["chg_1m"])+" ("+str(live["chg_1m_pct"])+"%) 1min",tick_color), unsafe_allow_html=True)
+        tick_arrow+" "+str(live["chg_1m"])+" ("+str(live["chg_1m_pct"])+"%) 1min",tick_color), unsafe_allow_html=True)
     m2.markdown(mon_card("DAY CHANGE",day_arrow+" "+str(abs(live["chg_day_pct"]))+"%",
-                         "vs open $"+str(live["session_open"]),day_color), unsafe_allow_html=True)
+        "vs open $"+str(live["session_open"]),day_color), unsafe_allow_html=True)
     m3.markdown(mon_card("SESSION HIGH","$"+str(live["session_high"]),
-                         "+"+str(round(live["session_high"]-live["session_open"],3))+" from open","#3fb950"), unsafe_allow_html=True)
+        "+"+str(round(live["session_high"]-live["session_open"],3))+" from open","#3fb950"), unsafe_allow_html=True)
     m4.markdown(mon_card("SESSION LOW","$"+str(live["session_low"]),
-                         str(round(live["session_low"]-live["session_open"],3))+" from open","#f85149"), unsafe_allow_html=True)
+        str(round(live["session_low"]-live["session_open"],3))+" from open","#f85149"), unsafe_allow_html=True)
     m5.markdown(mon_card("SESSION RANGE",str(live["session_range_pct"])+"%",
-                         "$"+str(live["session_low"])+" – $"+str(live["session_high"]),"#d29922"), unsafe_allow_html=True)
+        "$"+str(live["session_low"])+" – $"+str(live["session_high"]),"#d29922"), unsafe_allow_html=True)
     vol_ratio = live.get("vol_ratio", 0)
     vol_display = str(vol_ratio)+"x" if vol_ratio > 0 else "Calculating…"
     vc="#f85149" if vol_ratio>=2 else "#d29922" if vol_ratio>=1.3 else "#8b949e"
     m6.markdown(mon_card("VOL RATIO",vol_display,
-                         "last "+str(live["last_vol"])+" / avg "+str(live["avg_vol"]),vc), unsafe_allow_html=True)
+        "last "+str(live["last_vol"])+" / avg "+str(live["avg_vol"]),vc), unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
     col_alerts,col_gauge,col_ticks = st.columns([1.4,1,1.2])
     with col_alerts:
         st.markdown("#### ⚡ Alerts")
         alerts = check_alerts(live,snap)
-        dot_map={"red":"🔴","green":"🟢","yellow":"🟡"}
+        dot_map={"red":"U0001f534","green":"U0001f7e2","yellow":"U0001f7e1"}
         for al in alerts:
-            dot=dot_map.get(al["level"],"🟡")
-            st.markdown(dot+" "+al["msg"])
-    with col_gauge:
+            dot=dot_map.get(al["level"],"U0001f7e1")
+            st.markdown(dot+" "+al["msg"])    with col_gauge:
         st.markdown("#### **Momentum Gauges**")
         span=live["session_high"]-live["session_low"]
         pos=int(((live["price"]-live["session_low"])/span*100)) if span else 50
         bc="#3fb950" if pos>60 else "#f85149" if pos<40 else "#d29922"
         st.markdown('<div style="margin-bottom:12px"><div style="font-size:12px;color:#8b949e;margin-bottom:4px">Session Position</div>'
-                    '<div class="score-bar-wrap"><div class="score-bar" style="width:'+str(pos)+'%;background:'+bc+'"></div></div>'
-                    '<div style="font-size:11px;color:#8b949e;margin-top:3px">'+str(pos)+'% of range</div></div>',
-                    unsafe_allow_html=True)
+            '<div class="score-bar-wrap"><div class="score-bar" style="width:'+str(pos)+'%;background:'+bc+'"></div></div>'
+            '<div style="font-size:11px;color:#8b949e;margin-top:3px">'+str(pos)+'% of range</div></div>',
+            unsafe_allow_html=True)
         rv=snap.get("d_rsi") or 50
         rp=int(min(100,max(0,rv)))
         rc="#f85149" if rv>70 else "#3fb950" if rv<30 else "#d29922"
         rl="OVERBOUGHT" if rv>70 else "OVERSOLD" if rv<30 else "NEUTRAL"
         st.markdown('<div style="margin-bottom:12px"><div style="font-size:12px;color:#8b949e;margin-bottom:4px">RSI(14): '+str(rv)+'</div>'
-                    '<div class="score-bar-wrap"><div class="score-bar" style="width:'+str(rp)+'%;background:'+rc+'"></div></div>'
-                    '<div style="font-size:11px;color:#8b949e;margin-top:3px">'+rl+'</div></div>',
-                    unsafe_allow_html=True)
+            '<div class="score-bar-wrap"><div class="score-bar" style="width:'+str(rp)+'%;background:'+rc+'"></div></div>'
+            '<div style="font-size:11px;color:#8b949e;margin-top:3px">'+rl+'</div></div>',
+            unsafe_allow_html=True)
         sk_live=snap.get("d_stochrsi_k") or 50
         skp=int(min(100,max(0,sk_live)))
         skc="#f85149" if sk_live>80 else "#3fb950" if sk_live<20 else "#d29922"
         skl="OVERBOUGHT" if sk_live>80 else "OVERSOLD" if sk_live<20 else "NEUTRAL"
         st.markdown('<div style="margin-bottom:12px"><div style="font-size:12px;color:#8b949e;margin-bottom:4px">StochRSI K: '+str(sk_live)+'</div>'
-                    '<div class="score-bar-wrap"><div class="score-bar" style="width:'+str(skp)+'%;background:'+skc+'"></div></div>'
-                    '<div style="font-size:11px;color:#8b949e;margin-top:3px">'+skl+'</div></div>',
-                    unsafe_allow_html=True)
+            '<div class="score-bar-wrap"><div class="score-bar" style="width:'+str(skp)+'%;background:'+skc+'"></div></div>'
+            '<div style="font-size:11px;color:#8b949e;margin-top:3px">'+skl+'</div></div>',
+            unsafe_allow_html=True)
         vp=int(min(100,vol_ratio/3*100))
         vgc="#f85149" if vol_ratio>=2 else "#d29922" if vol_ratio>=1.3 else "#3fb950"
         vl="SPIKE" if vol_ratio>=2 else "ELEVATED" if vol_ratio>=1.3 else "NORMAL"
         st.markdown('<div><div style="font-size:12px;color:#8b949e;margin-bottom:4px">Volume: '+str(vol_ratio)+'x avg</div>'
-                    '<div class="score-bar-wrap"><div class="score-bar" style="width:'+str(vp)+'%;background:'+vgc+'"></div></div>'
-                    '<div style="font-size:11px;color:#8b949e;margin-top:3px">'+vl+'</div></div>',
-                    unsafe_allow_html=True)
+            '<div class="score-bar-wrap"><div class="score-bar" style="width:'+str(vp)+'%;background:'+vgc+'"></div></div>'
+            '<div style="font-size:11px;color:#8b949e;margin-top:3px">'+vl+'</div></div>',
+            unsafe_allow_html=True)
     with col_ticks:
         st.markdown("#### **Price Tick Log**")
         ticks=live.get("ticks",[])[-15:]
@@ -1410,32 +1624,30 @@ else:
             th+='<span style="color:'+tc+';font-weight:700">'+ta+' $'+str(tk["p"])+'</span></div>'
         th+='</div>'
         st.markdown(th, unsafe_allow_html=True)
-    st.markdown("<br>", unsafe_allow_html=True)
-    tick_prices=[tk["p"] for tk in live.get("ticks",[])]
-    tick_times=[tk["t"] for tk in live.get("ticks",[])]
-    if len(tick_prices)>=2:
-        sp_color="#3fb950" if tick_prices[-1]>=tick_prices[0] else "#f85149"
-        fill_c="rgba(63,185,80,0.08)" if sp_color=="#3fb950" else "rgba(248,81,73,0.08)"
-        fig_spark=go.Figure(go.Scatter(
-            x=tick_times,y=tick_prices,mode="lines+markers",
-            line=dict(color=sp_color,width=2),marker=dict(size=4,color=sp_color),
-            fill="tozeroy",fillcolor=fill_c,
-            hovertemplate="<b>%{x}</b><br>$%{y:.3f}<extra></extra>"))
-        fig_spark.update_layout(
-            template="plotly_dark",paper_bgcolor="#0d1117",plot_bgcolor="#0d1117",
-            height=140,margin=dict(l=0,r=0,t=10,b=0),showlegend=False,
-            xaxis=dict(showgrid=False,tickfont=dict(size=9)),
-            yaxis=dict(showgrid=True,gridcolor="#1c2128",tickformat="$.3f",tickfont=dict(size=9)))
-        st.caption("Last "+str(len(tick_prices))+" ticks")
-        st.plotly_chart(fig_spark, use_container_width=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+        tick_prices=[tk["p"] for tk in live.get("ticks",[])]
+        tick_times=[tk["t"] for tk in live.get("ticks",[])]
+        if len(tick_prices)>=2:
+            sp_color="#3fb950" if tick_prices[-1]>=tick_prices[0] else "#f85149"
+            fill_c="rgba(63,185,80,0.08)" if sp_color=="#3fb950" else "rgba(248,81,73,0.08)"
+            fig_spark=go.Figure(go.Scatter(
+                x=tick_times,y=tick_prices,mode="lines+markers",
+                line=dict(color=sp_color,width=2),marker=dict(size=4,color=sp_color),
+                fill="tozeroy",fillcolor=fill_c,
+                hovertemplate="<b>%{x}</b><br>$%{y:.3f}<extra></extra>"))
+            fig_spark.update_layout(
+                template="plotly_dark",paper_bgcolor="#0d1117",plot_bgcolor="#0d1117",
+                height=140,margin=dict(l=0,r=0,t=10,b=0),showlegend=False,
+                xaxis=dict(showgrid=False,tickfont=dict(size=9)),
+                yaxis=dict(showgrid=True,gridcolor="#1c2128",tickformat="$.3f",tickfont=dict(size=9)))
+            st.caption("Last "+str(len(tick_prices))+" ticks")
+            st.plotly_chart(fig_spark, use_container_width=True)
 st.divider()
-# Price Predictor Section
-st.markdown('### 🔮 Price Predictor — 5-Model Ensemble Forecast')
+# ── Price Predictor Section ──────────────────────────────────────────────────────────────────
+st.markdown('### U0001f52e Price Predictor — 5-Model Ensemble Forecast')
 st.caption(f'Forecasting {forecast_days} trading days ahead · Linear · Polynomial · MA · Exponential Smoothing · Momentum')
-
 with st.spinner('Running forecast models…'):
     fc = run_forecasts(snap['daily_df'], forecast_days)
-
 current = snap['price']
 future_dates = fc['future_dates']
 ensemble = fc['ensemble']
@@ -1447,12 +1659,10 @@ mom_pred = fc['mom_pred']
 ci_upper = fc['ci_upper']
 ci_lower = fc['ci_lower']
 close_arr = fc['close']
-
 ens_target = ensemble[-1]
 ens_chg_pct = ((ens_target - current) / current) * 100
 ens_color = '#3fb950' if ens_target > current else '#f85149'
 ens_arrow = '▲' if ens_target > current else '▼'
-
 pa, pb, pc = st.columns(3)
 pa.markdown(
     f'<div class="pred-card"><div style="font-size:0.7rem;color:#8b949e">Ensemble Target ({forecast_days}d)</div>'
@@ -1469,8 +1679,7 @@ pc.markdown(
     f'<div class="pred-card"><div style="font-size:0.7rem;color:#8b949e">Model Consensus</div>'
     f'<div style="font-size:1.4rem;font-weight:700;color:#f0f6fc">{bulls_count}/5 Bullish</div>'
     f'<div style="font-size:0.85rem;color:#8b949e">models above current price</div></div>',
-    unsafe_allow_html=True)
-pf_tab1, pf_tab2, pf_tab3 = st.tabs(['📈 Candlestick + Forecast', '🔀 All Models Comparison', '📊 Technical Oscillators'])
+    unsafe_allow_html=True)pf_tab1, pf_tab2, pf_tab3 = st.tabs(['U0001f4c8 Candlestick + Forecast', 'U0001f500 All Models Comparison', 'U0001f4ca Technical Oscillators'])
 
 with pf_tab1:
     df_tail = snap['daily_df'].tail(60).copy()
@@ -1559,7 +1768,7 @@ with pf_tab3:
     fig_osc.update_yaxes(gridcolor='#1c2128')
     st.plotly_chart(fig_osc, use_container_width=True)
 # Day-by-Day Forecast Table
-st.markdown('### 🗓️ Day-by-Day Price Forecast')
+st.markdown('### U0001f5d3️ Day-by-Day Price Forecast')
 pred_df = pd.DataFrame({
     'Date': future_dates.strftime('%a %b %d, %Y'),
     'Linear ($)': [f'${v:.2f}' for v in lin_pred],
@@ -1575,7 +1784,7 @@ pred_df = pd.DataFrame({
 st.dataframe(pred_df.set_index('Date'), use_container_width=True)
 
 # Forecast Signal Dashboard
-st.markdown('### 🎯 Forecast Signal Dashboard')
+st.markdown('### U0001f3af Forecast Signal Dashboard')
 rsi_now=snap.get('d_rsi') or 50
 macd_now=snap.get('d_macd') or 0; sig_now=snap.get('d_macd_sig') or 0
 ma5_val=snap['daily_df']['EMA20'].iloc[-1] if 'EMA20' in snap['daily_df'].columns else current
@@ -1591,25 +1800,24 @@ def signal_card(col, title, signal, value):
 
 fs1,fs2,fs3,fs4,fs5 = st.columns(5)
 signal_card(fs1,'RSI Signal',
-    'Oversold — Bullish 🟢' if rsi_now<35 else ('Overbought — Bearish 🔴' if rsi_now>65 else 'Neutral ⚪'),
+    'Oversold — Bullish U0001f7e2' if rsi_now<35 else ('Overbought — Bearish U0001f534' if rsi_now>65 else 'Neutral ⚪'),
     f'RSI: {rsi_now:.1f}')
 signal_card(fs2,'MACD Cross',
-    'Bullish Cross 🟢' if macd_now>sig_now else 'Bearish Cross 🔴',
+    'Bullish Cross U0001f7e2' if macd_now>sig_now else 'Bearish Cross U0001f534',
     f'MACD {macd_now:.3f}')
 signal_card(fs3,'EMA Trend',
-    'Uptrend 🟢' if current>ma5_val>ma50_val else ('Downtrend 🔴' if current<ma5_val<ma50_val else 'Mixed ⚪'),
+    'Uptrend U0001f7e2' if current>ma5_val>ma50_val else ('Downtrend U0001f534' if current<ma5_val<ma50_val else 'Mixed ⚪'),
     f'EMA20 ${ma5_val:.2f}')
 signal_card(fs4,'BB Position',
-    'Near Upper 🔴' if current>(snap.get('d_bb_up') or current)*0.98 else
-    ('Near Lower 🟢' if current<(snap.get('d_bb_lo') or current)*1.02 else 'Mid Band ⚪'),
+    'Near Upper U0001f534' if current>(snap.get('d_bb_up') or current)*0.98 else
+    ('Near Lower U0001f7e2' if current<(snap.get('d_bb_lo') or current)*1.02 else 'Mid Band ⚪'),
     f'Mid ${snap.get("d_bb_mid") or 0:.2f}')
 signal_card(fs5,'Forecast Bias',
-    '📈 Bullish' if ensemble[-1]>current else '📉 Bearish',
+    'U0001f4c8 Bullish' if ensemble[-1]>current else 'U0001f4c9 Bearish',
     f'Target ${ensemble[-1]:.2f}')
 st.divider()
-
 # Correlation with Related Assets
-st.markdown('### 📡 Silver Correlation with Related Assets')
+st.markdown('### U0001f4e1 Silver Correlation with Related Assets')
 with st.spinner('Fetching correlation data…'):
     try:
         corr_data = get_correlation_data('1y')
@@ -1633,7 +1841,7 @@ with st.spinner('Fetching correlation data…'):
     except Exception: st.caption('Correlation data unavailable')
 
 # Returns Distribution & Risk Metrics
-st.markdown('### 📊 Returns Analysis & Risk Metrics')
+st.markdown('### U0001f4ca Returns Analysis & Risk Metrics')
 col_a,col_b = st.columns(2)
 with col_a:
     ret_series = snap['daily_df']['Close'].pct_change().dropna()*100
@@ -1658,10 +1866,10 @@ with col_b:
     st.dataframe(risk_df.set_index('Metric'), use_container_width=True, height=230)
 st.divider()
 # AI Analysis Section
-st.markdown('### 🤖 AI Trade Analysis & Targets')
-st.caption('Powered by Claude '+AI_MODEL+' · All pro indicators included · Gold/Silver Ratio · DXY · Cached 5 min')
+st.markdown('### U0001f916 AI Trade Analysis & Targets')
+st.caption('Powered by Claude '+AI_MODEL+' · All pro indicators included · Gold/Silver Ratio · DXY · ETF Flow · Cached 5 min')
 if not api_key:
-    st.info('👈 Enter your Anthropic API key in the sidebar to unlock AI trade analysis.')
+    st.info('U0001f448 Enter your Anthropic API key in the sidebar to unlock AI trade analysis.')
     st.markdown('<div class="analysis-box"><b>What AI Analysis Provides:</b>\n\n'
                 '• MARKET BIAS with conviction level\n'
                 '• BUY SETUP — Entry zone, targets (T1/T2/T3), stop loss, risk:reward\n'
@@ -1669,15 +1877,18 @@ if not api_key:
                 '• KEY LEVELS to watch\n'
                 '• PATTERN/SIGNAL identification\n'
                 '• RISK RATING (1-10)\n'
-                '• TRADER NOTE with macro context (G/S Ratio, DXY, Sentiment)\n'
+                '• TRADER NOTE with macro context (G/S Ratio, DXY, ETF Flow, Sentiment)\n'
                 '</div>', unsafe_allow_html=True)
 else:
     with st.spinner('Claude is analysing the market with all pro indicators…'):
         try:
+            etf_bias_for_ai = snap.get('etf_flow_bias') if show_etf_vflow else None
+            sent_score_for_ai = news_data.get('sentiment_score') if show_news and news_data else None
             analysis = get_ai_analysis(snap['price'], api_key,
                 gs_ratio=snap.get('gs_ratio'),
                 dxy=snap.get('dxy'),
-                sentiment_score=news_data.get('sentiment_score') if show_news and 'news_data' in dir() else None)
+                sentiment_score=sent_score_for_ai,
+                etf_bias=etf_bias_for_ai)
             st.markdown('<div class="analysis-box">'+analysis+'</div>', unsafe_allow_html=True)
         except requests.HTTPError as e:
             if e.response is not None and e.response.status_code==401:
@@ -1690,8 +1901,9 @@ else:
 st.divider()
 st.markdown(
     '<div style="text-align:center;color:#8b949e;font-size:0.78rem;">'
-    '⚡ Silver AI Trading Agent PRO v3 · '
-    'New: Gold/Silver Ratio · DXY Overlay · News Sentiment · Gauge Charts · HTML Bug Fixed · '
+    '⚡ Silver AI Trading Agent PRO v4 · '
+    'New: ETF Volume Flow (SLV/SIVR/PSLV/AGQ/ZSL) · '
+    'Gold/Silver Ratio · DXY Overlay · News Sentiment · Gauge Charts · '
     'Data: Yahoo Finance · AI: Claude · '
     'Forecasting: Linear · Polynomial · MA · Exp Smoothing · Momentum Ensemble · '
     '⚠️ Educational use only — not financial advice.</div>',
