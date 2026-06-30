@@ -1,8 +1,9 @@
 """
-Silver AI Trading Agent PRO v2 + Price Predictor
-=================================================
+Silver AI Trading Agent PRO v3 — Enhanced Edition
+==================================================
 Features: Live COMEX Silver · Pro Technical Indicators · AI Analysis
-          5-Model Price Forecasting · Risk Analytics · Correlation
+5-Model Price Forecasting · Risk Analytics · Correlation
+Gold/Silver Ratio · DXY Overlay · News Sentiment · Enhanced UI
 """
 
 import json
@@ -18,7 +19,6 @@ import streamlit as st
 import streamlit.components.v1 as components
 from plotly.subplots import make_subplots
 
-# Snowflake secret (SiS only)
 try:
     import _snowflake
     _IN_SNOWFLAKE = True
@@ -37,12 +37,11 @@ def _get_secret():
         pass
     return None
 
-# Page config
 st.set_page_config(
-    page_title='Silver AI Trading Agent PRO',
-    page_icon='⚡',
-    layout='wide',
-    initial_sidebar_state='expanded',
+    page_title="Silver AI Trading Agent PRO v3",
+    page_icon="⚡",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 st.markdown("""
@@ -87,11 +86,26 @@ h1,h2,h3,h4 { color: #f0f6fc; }
     border: 1px solid #30363d; border-radius: 10px;
     padding: 16px; margin: 6px 0; text-align: center;
 }
+.gauge-container {
+    background:#161b22; border:1px solid #30363d; border-radius:10px;
+    padding:16px; text-align:center;
+}
+.news-card {
+    background:#161b22; border:1px solid #30363d; border-radius:8px;
+    padding:12px 16px; margin:6px 0;
+}
+.ratio-card {
+    background: linear-gradient(135deg, #1a1f2e, #161b22);
+    border: 1px solid #3d4f7c; border-radius:10px; padding:16px; text-align:center;
+}
 </style>
 """, unsafe_allow_html=True)
 
 TICKER = "SI=F"
+GOLD_TICKER = "GC=F"
+DXY_TICKER = "DX-Y.NYB"
 AI_MODEL = "claude-opus-4-5"
+AI_MODEL_FAST = "claude-haiku-4-5"
 YF_BASE = "https://query1.finance.yahoo.com/v8/finance/chart"
 YF_BASE2 = "https://query2.finance.yahoo.com/v8/finance/chart"
 YF_HDR = {
@@ -101,6 +115,7 @@ YF_HDR = {
     "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://finance.yahoo.com/",
 }
+
 # ── Data Fetching ────────────────────────────────────────────────────────────
 def _yf_fetch(ticker, interval, range_, _retry=3):
     urls = [YF_BASE, YF_BASE2]
@@ -199,7 +214,7 @@ def _vwap(df):
 
 def _ichimoku(df, t=9, k=26, s=52):
     tenkan = (df["High"].rolling(t).max()+df["Low"].rolling(t).min())/2
-    kijun  = (df["High"].rolling(k).max()+df["Low"].rolling(k).min())/2
+    kijun = (df["High"].rolling(k).max()+df["Low"].rolling(k).min())/2
     senkou_a = ((tenkan+kijun)/2).shift(k)
     senkou_b = ((df["High"].rolling(s).max()+df["Low"].rolling(s).min())/2).shift(k)
     chikou = df["Close"].shift(-k)
@@ -252,6 +267,7 @@ def enrich(df):
      df["Ichi_SenkouA"],df["Ichi_SenkouB"],df["Ichi_Chikou"]) = _ichimoku(df)
     df["Supertrend"],df["ST_Dir"] = _supertrend(df)
     return df
+
 # ── Signal Scoring ───────────────────────────────────────────────────────────
 def signal_score(snap):
     points = 0; max_pts = 0; breakdown = []
@@ -297,6 +313,11 @@ def signal_score(snap):
     macd_div=snap.get("d_macd_div") or "none"
     if rsi_div!="none": add("RSI Div",rsi_div.upper(), rsi_div=="bullish", rsi_div=="bearish")
     if macd_div!="none": add("MACD Div",macd_div.upper(), macd_div=="bullish", macd_div=="bearish")
+    # Gold/Silver ratio signal
+    gs_ratio = snap.get("gs_ratio") or 0
+    if gs_ratio > 0:
+        if gs_ratio > 80: add("G/S Ratio","Ratio="+str(round(gs_ratio,1)), True, False)  # high ratio = silver cheap
+        elif gs_ratio < 60: add("G/S Ratio","Ratio="+str(round(gs_ratio,1)), False, True)  # low ratio = silver expensive
     score = round(points/max_pts*100) if max_pts else 50
     if score>=60: label,color="BULLISH","#3fb950"
     elif score<=40: label,color="BEARISH","#f85149"
@@ -322,10 +343,67 @@ def fibonacci(df):
             "ret_786":round(hi-0.786*d,3),
             "ext_1272":round(lo+1.272*d,3),"ext_1618":round(lo+1.618*d,3)}
 
+# ── Gold/Silver Ratio & DXY ───────────────────────────────────────────────────
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_gs_ratio_and_dxy():
+    """Fetch Gold price and DXY for ratio + correlation display."""
+    result = {"gold_price": None, "dxy": None, "gs_ratio": None,
+              "gold_daily": None, "dxy_daily": None}
+    try:
+        gold_df = _yf_fetch(GOLD_TICKER, "1d", "6mo")
+        result["gold_price"] = float(gold_df["Close"].iloc[-1])
+        result["gold_daily"] = gold_df
+    except Exception:
+        pass
+    try:
+        dxy_df = _yf_fetch(DXY_TICKER, "1d", "6mo")
+        result["dxy"] = float(dxy_df["Close"].iloc[-1])
+        result["dxy_daily"] = dxy_df
+    except Exception:
+        pass
+    return result
+
+# ── News Sentiment ────────────────────────────────────────────────────────────
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_news_sentiment():
+    """Fetch silver-related news via RSS and return headlines."""
+    headlines = []
+    feeds = [
+        "https://feeds.finance.yahoo.com/rss/2.0/headline?s=SI=F&region=US&lang=en-US",
+        "https://www.kitco.com/rss/silver.xml",
+    ]
+    for url in feeds:
+        try:
+            r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code == 200:
+                import re
+                titles = re.findall(r'<title><![CDATA[(.*?)]]></title>', r.text)
+                if not titles:
+                    titles = re.findall(r'<title>(.*?)</title>', r.text)
+                for t in titles[1:6]:  # skip feed title
+                    clean = re.sub(r'<[^>]+>', '', t).strip()
+                    if clean and len(clean) > 10:
+                        headlines.append(clean)
+        except Exception:
+            pass
+    # Score sentiment: simple keyword-based
+    bullish_kw = ["surge","rally","rise","gain","bull","up","high","strong","buy","support","breakout","gold"]
+    bearish_kw = ["fall","drop","decline","bear","low","weak","sell","pressure","breakdown","sell-off","crash"]
+    scores = []
+    for h in headlines[:8]:
+        hl = h.lower()
+        bull = sum(1 for k in bullish_kw if k in hl)
+        bear = sum(1 for k in bearish_kw if k in hl)
+        if bull > bear: scores.append(1)
+        elif bear > bull: scores.append(-1)
+        else: scores.append(0)
+    avg = sum(scores)/len(scores) if scores else 0
+    return {"headlines": headlines[:8], "sentiment_score": round(avg,2), "count": len(headlines)}
+
 # ── Snapshot (cached 5 min) ───────────────────────────────────────────────────
 @st.cache_data(ttl=300, show_spinner=False)
 def load_snapshot():
-    daily  = enrich(_yf_fetch(TICKER,"1d","6mo"))
+    daily = enrich(_yf_fetch(TICKER,"1d","6mo"))
     hourly = enrich(_yf_fetch(TICKER,"1h","5d"))
     m15 = _yf_fetch(TICKER,"15m","2d")
     try: m5 = _yf_fetch(TICKER,"5m","1d")
@@ -338,8 +416,13 @@ def load_snapshot():
     d_sup,d_res = pivot_levels(daily)
     h_sup,h_res = pivot_levels(hourly,n=3)
     fibs = fibonacci(daily)
-    rsi_div  = _detect_divergence(daily["Close"], daily["RSI"])
+    rsi_div = _detect_divergence(daily["Close"], daily["RSI"])
     macd_div = _detect_divergence(daily["Close"], daily["MACD"])
+    # Gold/Silver ratio
+    gs_data = fetch_gs_ratio_and_dxy()
+    gs_ratio = None
+    if gs_data["gold_price"] and price > 0:
+        gs_ratio = round(gs_data["gold_price"] / price, 2)
     def f(v,n=3):
         try: return round(float(v),n) if v is not None and not pd.isna(v) else None
         except: return None
@@ -366,10 +449,13 @@ def load_snapshot():
         h_wr=f(h["WilliamsR"],2), h_cci=f(h["CCI"],2), h_vwap=f(h["VWAP"],3),
         d_sup=d_sup, d_res=d_res, h_sup=h_sup, h_res=h_res, fibs=fibs,
         daily_df=daily, hourly_df=hourly,
-    )
+        gold_price=gs_data.get("gold_price"), dxy=gs_data.get("dxy"),
+        gs_ratio=gs_ratio, gold_daily=gs_data.get("gold_daily"),
+        dxy_daily=gs_data.get("dxy_daily"),
+          )
+
 # ── Price Predictor Functions ────────────────────────────────────────────────
 def run_forecasts(daily_df, forecast_days=7):
-    """Run 5 forecasting models and return predictions + ensemble."""
     close = daily_df["Close"].values
     n = len(close)
     x = np.arange(n)
@@ -377,17 +463,13 @@ def run_forecasts(daily_df, forecast_days=7):
     future_dates = pd.date_range(
         daily_df.index[-1].tz_localize(None) + timedelta(days=1),
         periods=forecast_days, freq="B")
-    # 1. Linear Regression
     lin_coef = np.polyfit(x, close, 1)
-    lin_pred  = np.polyval(lin_coef, x_future)
-    # 2. Polynomial Regression (degree 3)
+    lin_pred = np.polyval(lin_coef, x_future)
     poly_coef = np.polyfit(x, close, 3)
     poly_pred = np.polyval(poly_coef, x_future)
-    # 3. Moving Average Extrapolation
     ma20 = daily_df["BB_Mid"].values if "BB_Mid" in daily_df.columns else pd.Series(close).rolling(20).mean().values
     ma_slope = (ma20[-1] - ma20[-21]) / 20 if n > 21 else 0
-    ma_pred  = np.array([ma20[-1] + ma_slope*(i+1) for i in range(forecast_days)])
-    # 4. Exponential Smoothing (Holts)
+    ma_pred = np.array([ma20[-1] + ma_slope*(i+1) for i in range(forecast_days)])
     alpha, beta = 0.3, 0.1
     level, trend_val = close[0], close[1]-close[0]
     for v in close[1:]:
@@ -395,13 +477,10 @@ def run_forecasts(daily_df, forecast_days=7):
         level = alpha*v + (1-alpha)*(level+trend_val)
         trend_val = beta*(level-prev_l) + (1-beta)*trend_val
     exp_pred = np.array([level + trend_val*(i+1) for i in range(forecast_days)])
-    # 5. Momentum Forecast
     mom_period = min(10, n//4)
     momentum = (close[-1] - close[-mom_period]) / mom_period
-    mom_pred  = np.array([close[-1] + momentum*(i+1) for i in range(forecast_days)])
-    # Ensemble
+    mom_pred = np.array([close[-1] + momentum*(i+1) for i in range(forecast_days)])
     ensemble = (lin_pred + poly_pred + ma_pred + exp_pred + mom_pred) / 5
-    # Confidence interval (based on historical daily volatility)
     returns = pd.Series(close).pct_change().dropna()
     vol_daily = returns.std()
     sigma = vol_daily * close[-1]
@@ -437,7 +516,7 @@ def get_correlation_data(period="1y"):
 
 # ── Live Monitoring ───────────────────────────────────────────────────────────
 def fetch_live_price():
-    for interval, range_ in [("5m","1d"),("15m","5d")]  :
+    for interval, range_ in [("5m","1d"),("15m","5d")]:
         try:
             r = requests.get(f"{YF_BASE}/{TICKER}",
                 params={"interval":interval,"range":range_,"includePrePost":"false"},
@@ -446,17 +525,17 @@ def fetch_live_price():
             res = r.json()["chart"]["result"][0]
             q = res["indicators"]["quote"][0]
             ts = res["timestamp"]
-            closes  = [c for c in q["close"]  if c is not None]
-            opens_l = [o for o in q["open"]   if o is not None]
-            highs   = [h for h in q["high"]   if h is not None]
-            lows    = [lv for lv in q["low"]  if lv is not None]
+            closes = [c for c in q["close"] if c is not None]
+            opens_l = [o for o in q["open"] if o is not None]
+            highs = [h for h in q["high"] if h is not None]
+            lows = [lv for lv in q["low"] if lv is not None]
             volumes = [v for v in q.get("volume",[0]*len(ts)) if v is not None]
             if not closes: continue
             price = closes[-1]
             session_high = max(highs) if highs else price
-            session_low  = min(lows)  if lows  else price
+            session_low = min(lows) if lows else price
             session_open = opens_l[0] if opens_l else price
-            avg_vol  = sum(volumes)/len(volumes) if volumes else 1
+            avg_vol = sum(volumes)/len(volumes) if volumes else 1
             last_vol = volumes[-1] if volumes else 0
             prev_close = closes[-2] if len(closes)>=2 else closes[0]
             chg_1m = round(price-prev_close,3)
@@ -467,7 +546,7 @@ def fetch_live_price():
             for i in range(max(0,len(closes)-20), len(closes)):
                 direction = "U" if i==0 or closes[i]>=closes[i-1] else "D"
                 ticks.append({"t":datetime.utcfromtimestamp(ts[i]).strftime("%H:%M"),
-                               "p":round(closes[i],3),"dir":direction})
+                              "p":round(closes[i],3),"dir":direction})
             return {
                 "price":round(price,3),"session_high":round(session_high,3),
                 "session_low":round(session_low,3),"session_open":round(session_open,3),
@@ -480,6 +559,7 @@ def fetch_live_price():
             }
         except Exception: pass
     return {}
+
 def check_alerts(live, snap):
     alerts = []
     if not live: return [{"level":"yellow","msg":"No live data"}]
@@ -513,7 +593,10 @@ def check_alerts(live, snap):
         if price>ct: alerts.append({"level":"green","msg":"Price ABOVE Ichimoku Cloud"})
         elif price<cb: alerts.append({"level":"red","msg":"Price BELOW Ichimoku Cloud"})
         else: alerts.append({"level":"yellow","msg":"Price INSIDE Ichimoku Cloud"})
-    for lvl in snap.get("d_sup",[]): 
+    gs_ratio = snap.get("gs_ratio") or 0
+    if gs_ratio > 85: alerts.append({"level":"green","msg":f"Gold/Silver Ratio HIGH ({gs_ratio:.1f}) — Silver historically CHEAP"})
+    elif gs_ratio > 0 and gs_ratio < 55: alerts.append({"level":"yellow","msg":f"Gold/Silver Ratio LOW ({gs_ratio:.1f}) — Silver historically EXPENSIVE"})
+    for lvl in snap.get("d_sup",[]):
         if abs(price-lvl)/lvl<0.003: alerts.append({"level":"green","msg":"Near Support $"+str(lvl)})
     for lvl in snap.get("d_res",[]):
         if abs(price-lvl)/lvl<0.003: alerts.append({"level":"red","msg":"Near Resistance $"+str(lvl)})
@@ -522,18 +605,27 @@ def check_alerts(live, snap):
     return alerts
 
 # ── Chart ─────────────────────────────────────────────────────────────────────
-def make_chart(df, support, resistance, fib, current_price, show_ichimoku=True, timeframe="Daily"):
+def make_chart(df, support, resistance, fib, current_price, show_ichimoku=True, timeframe="Daily",
+               gold_df=None, dxy_df=None, show_gold=False, show_dxy=False):
     df = df.copy()
     if df.index.tzinfo is not None:
         df.index = df.index.tz_convert("UTC").tz_localize(None)
-    fig = make_subplots(rows=4,cols=1,shared_xaxes=True,
-        row_heights=[0.55,0.12,0.18,0.15],vertical_spacing=0.02,
-        subplot_titles=("","Volume","RSI / StochRSI","MACD"))
+
+    rows = 4
+    row_heights = [0.55,0.12,0.18,0.15]
+    subplot_titles = ("","Volume","RSI / StochRSI","MACD")
+
+    fig = make_subplots(rows=rows,cols=1,shared_xaxes=True,
+                        row_heights=row_heights,vertical_spacing=0.02,
+                        subplot_titles=subplot_titles)
+
     fig.add_trace(go.Candlestick(
         x=df.index,open=df["Open"],high=df["High"],low=df["Low"],close=df["Close"],
         name="Silver (SI=F)",
         increasing_line_color="#26a69a",increasing_fillcolor="#26a69a",
         decreasing_line_color="#ef5350",decreasing_fillcolor="#ef5350",line_width=1),row=1,col=1)
+
+    # Ichimoku Cloud
     if show_ichimoku and "Ichi_SenkouA" in df.columns:
         sa=df["Ichi_SenkouA"].dropna(); sb_v=df["Ichi_SenkouB"].dropna()
         cidx=sa.index.intersection(sb_v.index)
@@ -545,6 +637,8 @@ def make_chart(df, support, resistance, fib, current_price, show_ichimoku=True, 
                 line=dict(color="rgba(38,166,154,0.5)",width=1)),row=1,col=1)
             fig.add_trace(go.Scatter(x=sb_c.index,y=sb_c.values,name="Senkou B",
                 line=dict(color="rgba(239,83,80,0.5)",width=1),fill="tonexty",fillcolor=fill_c),row=1,col=1)
+
+    # Supertrend
     if "Supertrend" in df.columns and "ST_Dir" in df.columns:
         st_bull=df[df["ST_Dir"]==-1]["Supertrend"]
         st_bear=df[df["ST_Dir"]==1]["Supertrend"]
@@ -554,27 +648,36 @@ def make_chart(df, support, resistance, fib, current_price, show_ichimoku=True, 
         if not st_bear.empty:
             fig.add_trace(go.Scatter(x=st_bear.index,y=st_bear.values,mode="markers",
                 marker=dict(color="#ef5350",size=4,symbol="circle"),name="Supertrend SELL"),row=1,col=1)
+
+    # EMAs
     for col_,color,name,dash in [("EMA20","#26a69a","EMA 20","solid"),
-            ("EMA50","#ef5350","EMA 50","solid"),("EMA200","#ffa726","EMA 200","dash")]:
+                                   ("EMA50","#ef5350","EMA 50","solid"),("EMA200","#ffa726","EMA 200","dash")]:
         if col_ in df.columns:
             s=df[col_].dropna()
             fig.add_trace(go.Scatter(x=s.index,y=s.values,
                 line=dict(color=color,width=1.5,dash=dash),name=name),row=1,col=1)
+
     if "VWAP" in df.columns:
         vwap_s=df["VWAP"].dropna()
         fig.add_trace(go.Scatter(x=vwap_s.index,y=vwap_s.values,
             line=dict(color="#42a5f5",width=1.5,dash="dot"),name="VWAP"),row=1,col=1)
+
+    # Price line
     fig.add_hline(y=current_price,line_color="rgba(255,255,255,0.85)",line_width=1.5,
-        annotation_text=" Price $"+str(current_price),annotation_position="right",
-        annotation_font_color="#ffffff",annotation_font_size=11,row=1,col=1)
+                  annotation_text=" Price $"+str(current_price),annotation_position="right",
+                  annotation_font_color="#ffffff",annotation_font_size=11,row=1,col=1)
+
+    # Support/Resistance
     for i,s in enumerate(support):
         fig.add_hline(y=s,line_color="#26a69a",line_dash="dash",line_width=1,
-            annotation_text=" S"+str(i+1)+" $"+str(s),annotation_position="right",
-            annotation_font_color="#26a69a",annotation_font_size=10,row=1,col=1)
+                      annotation_text=" S"+str(i+1)+" $"+str(s),annotation_position="right",
+                      annotation_font_color="#26a69a",annotation_font_size=10,row=1,col=1)
     for i,r in enumerate(resistance):
         fig.add_hline(y=r,line_color="#ef5350",line_dash="dash",line_width=1,
-            annotation_text=" R"+str(i+1)+" $"+str(r),annotation_position="right",
-            annotation_font_color="#ef5350",annotation_font_size=10,row=1,col=1)
+                      annotation_text=" R"+str(i+1)+" $"+str(r),annotation_position="right",
+                      annotation_font_color="#ef5350",annotation_font_size=10,row=1,col=1)
+
+    # Fibonacci
     fib_cfg=[("ret_236","#ab47bc","Fib 23.6%"),("ret_382","#ab47bc","Fib 38.2%"),
              ("ret_500","#42a5f5","Fib 50%"),("ret_618","#ab47bc","Fib 61.8%"),
              ("ret_786","#ab47bc","Fib 78.6%"),
@@ -582,39 +685,46 @@ def make_chart(df, support, resistance, fib, current_price, show_ichimoku=True, 
     for key,color,label in fib_cfg:
         if key in fib:
             fig.add_hline(y=fib[key],line_color=color,line_dash="dot",line_width=0.8,
-                annotation_text=" "+label+" $"+str(fib[key]),annotation_position="left",
-                annotation_font_color=color,annotation_font_size=9,row=1,col=1)
+                          annotation_text=" "+label+" $"+str(fib[key]),annotation_position="left",
+                          annotation_font_color=color,annotation_font_size=9,row=1,col=1)
+
+    # Volume
     vol_colors=["rgba(38,166,154,0.5)" if float(c)>=float(o) else "rgba(239,83,80,0.5)"
                 for c,o in zip(df["Close"],df["Open"])]
     fig.add_trace(go.Bar(x=df.index,y=df["Volume"],name="Volume",
-        marker_color=vol_colors,showlegend=False),row=2,col=1)
+                         marker_color=vol_colors,showlegend=False),row=2,col=1)
     vol_ma=df["Volume"].rolling(20).mean()
     fig.add_trace(go.Scatter(x=vol_ma.index,y=vol_ma.values,
-        line=dict(color="#ffa726",width=1,dash="dot"),name="Vol MA20",showlegend=False),row=2,col=1)
+                             line=dict(color="#ffa726",width=1,dash="dot"),name="Vol MA20",showlegend=False),row=2,col=1)
+
+    # RSI / StochRSI
     if "RSI" in df.columns:
         rsi_s=df["RSI"].dropna()
         fig.add_trace(go.Scatter(x=rsi_s.index,y=rsi_s.values,
-            line=dict(color="#42a5f5",width=1.5),name="RSI(14)"),row=3,col=1)
+                                 line=dict(color="#42a5f5",width=1.5),name="RSI(14)"),row=3,col=1)
     if "StochRSI_K" in df.columns:
         sk=df["StochRSI_K"].dropna(); sd_v=df["StochRSI_D"].dropna()
         fig.add_trace(go.Scatter(x=sk.index,y=sk.values,
-            line=dict(color="#ffa726",width=1),name="StochRSI K"),row=3,col=1)
+                                 line=dict(color="#ffa726",width=1),name="StochRSI K"),row=3,col=1)
         fig.add_trace(go.Scatter(x=sd_v.index,y=sd_v.values,
-            line=dict(color="#ef5350",width=1,dash="dot"),name="StochRSI D"),row=3,col=1)
+                                 line=dict(color="#ef5350",width=1,dash="dot"),name="StochRSI D"),row=3,col=1)
     fig.add_hrect(y0=70,y1=100,fillcolor="rgba(239,83,80,0.07)",line_width=0,row=3,col=1)
     fig.add_hrect(y0=0,y1=30,fillcolor="rgba(38,166,154,0.07)",line_width=0,row=3,col=1)
     fig.add_hline(y=70,line_color="rgba(239,83,80,0.5)",line_dash="dot",line_width=1,row=3,col=1)
     fig.add_hline(y=30,line_color="rgba(38,166,154,0.5)",line_dash="dot",line_width=1,row=3,col=1)
+
+    # MACD
     if "MACD" in df.columns:
         macd_s=df["MACD"].dropna(); sig_s=df["MACD_Sig"].dropna(); hist_s=df["MACD_Hist"].dropna()
         hist_colors=["rgba(38,166,154,0.6)" if v>=0 else "rgba(239,83,80,0.6)" for v in hist_s.values]
         fig.add_trace(go.Bar(x=hist_s.index,y=hist_s.values,name="MACD Hist",
-            marker_color=hist_colors,showlegend=False),row=4,col=1)
+                             marker_color=hist_colors,showlegend=False),row=4,col=1)
         fig.add_trace(go.Scatter(x=macd_s.index,y=macd_s.values,
-            line=dict(color="#42a5f5",width=1.5),name="MACD"),row=4,col=1)
+                                 line=dict(color="#42a5f5",width=1.5),name="MACD"),row=4,col=1)
         fig.add_trace(go.Scatter(x=sig_s.index,y=sig_s.values,
-            line=dict(color="#ffa726",width=1,dash="dot"),name="Signal"),row=4,col=1)
-        fig.add_hline(y=0,line_color="rgba(255,255,255,0.2)",line_width=1,row=4,col=1)
+                                 line=dict(color="#ffa726",width=1,dash="dot"),name="Signal"),row=4,col=1)
+    fig.add_hline(y=0,line_color="rgba(255,255,255,0.2)",line_width=1,row=4,col=1)
+
     fig.update_layout(
         template="plotly_dark",paper_bgcolor="#0d1117",plot_bgcolor="#0d1117",
         xaxis_rangeslider_visible=False,height=840,margin=dict(l=10,r=150,t=25,b=10),
@@ -623,13 +733,80 @@ def make_chart(df, support, resistance, fib, current_price, show_ichimoku=True, 
         hovermode="x unified",hoverlabel=dict(bgcolor="#161b22",bordercolor="#30363d",font_color="#c9d1d9"),
         spikedistance=-1)
     fig.update_xaxes(gridcolor="#1c2128",showgrid=True,zeroline=False,
-        showspikes=True,spikecolor="#42a5f5",spikethickness=1,spikedash="dot")
+                     showspikes=True,spikecolor="#42a5f5",spikethickness=1,spikedash="dot")
     fig.update_yaxes(gridcolor="#1c2128",showgrid=True,zeroline=False)
     fig.update_yaxes(title_text="USD/oz",tickformat="$,.2f",row=1,col=1)
     fig.update_yaxes(title_text="Vol",row=2,col=1)
     fig.update_yaxes(title_text="RSI",range=[0,100],row=3,col=1)
     fig.update_yaxes(title_text="MACD",row=4,col=1)
     return fig
+
+def make_gs_ratio_chart(silver_df, gold_df):
+    """Gold/Silver ratio chart with historical context."""
+    silver_df = silver_df.copy()
+    gold_df = gold_df.copy()
+    if silver_df.index.tzinfo is not None:
+        silver_df.index = silver_df.index.tz_convert("UTC").tz_localize(None)
+    if gold_df.index.tzinfo is not None:
+        gold_df.index = gold_df.index.tz_convert("UTC").tz_localize(None)
+    # Align on common dates
+    common = silver_df.index.intersection(gold_df.index)
+    if len(common) < 5:
+        return None
+    ratio = gold_df.loc[common, "Close"] / silver_df.loc[common, "Close"]
+    ratio_ma20 = ratio.rolling(20).mean()
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=ratio.index, y=ratio.values,
+                             line=dict(color="#c0c0c0", width=2), name="G/S Ratio"))
+    fig.add_trace(go.Scatter(x=ratio_ma20.index, y=ratio_ma20.values,
+                             line=dict(color="#ffa726", width=1.5, dash="dot"), name="MA20"))
+    # Historical context bands
+    fig.add_hrect(y0=80, y1=120, fillcolor="rgba(63,185,80,0.08)", line_width=0,
+                  annotation_text="Silver CHEAP zone (>80)", annotation_font_color="#3fb950",
+                  annotation_font_size=10)
+    fig.add_hrect(y0=0, y1=55, fillcolor="rgba(248,81,73,0.08)", line_width=0,
+                  annotation_text="Silver EXPENSIVE zone (<55)", annotation_font_color="#f85149",
+                  annotation_font_size=10)
+    fig.add_hline(y=80, line_color="#3fb950", line_dash="dash", line_width=1)
+    fig.add_hline(y=55, line_color="#f85149", line_dash="dash", line_width=1)
+    current_ratio = ratio.iloc[-1]
+    fig.add_hline(y=current_ratio, line_color="white", line_width=1.5,
+                  annotation_text=f" Current: {current_ratio:.1f}", annotation_font_color="white")
+    fig.update_layout(
+        template="plotly_dark", paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+        height=300, title="Gold/Silver Ratio (6 months)",
+        legend=dict(font=dict(size=11, color="#c9d1d9")),
+        yaxis_gridcolor="#1c2128", hovermode="x unified",
+        margin=dict(l=10, r=80, t=40, b=10))
+    return fig
+
+def make_dxy_overlay_chart(silver_df, dxy_df):
+    """DXY vs Silver dual-axis chart showing inverse correlation."""
+    silver_df = silver_df.copy()
+    dxy_df = dxy_df.copy()
+    if silver_df.index.tzinfo is not None:
+        silver_df.index = silver_df.index.tz_convert("UTC").tz_localize(None)
+    if dxy_df.index.tzinfo is not None:
+        dxy_df.index = dxy_df.index.tz_convert("UTC").tz_localize(None)
+    common = silver_df.index.intersection(dxy_df.index)
+    if len(common) < 5:
+        return None
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(go.Scatter(x=common, y=silver_df.loc[common, "Close"].values,
+                             line=dict(color="#c0c0c0", width=2), name="Silver (SI=F)"),
+                  secondary_y=False)
+    fig.add_trace(go.Scatter(x=common, y=dxy_df.loc[common, "Close"].values,
+                             line=dict(color="#ffa726", width=1.5, dash="dot"), name="DXY (USD Index)"),
+                  secondary_y=True)
+    fig.update_layout(
+        template="plotly_dark", paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+        height=300, title="Silver vs USD Index (Inverse Correlation)",
+        legend=dict(font=dict(size=11, color="#c9d1d9")),
+        hovermode="x unified", margin=dict(l=10, r=80, t=40, b=10))
+    fig.update_yaxes(title_text="Silver (USD/oz)", gridcolor="#1c2128", secondary_y=False)
+    fig.update_yaxes(title_text="DXY", secondary_y=True)
+    return fig
+
 def tradingview_widget(symbol="OANDA:XAGUSD",theme="dark",height=580,interval="60"):
     studies=["RSI@tv-basicstudies","MASimple@tv-basicstudies","MACD@tv-basicstudies",
              "IchimokuCloud@tv-basicstudies","SuperTrend@tv-basicstudies"]
@@ -652,12 +829,12 @@ def tradingview_widget(symbol="OANDA:XAGUSD",theme="dark",height=580,interval="6
 <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
 <script type="text/javascript">
 new TradingView.widget({{
-  "width":"100%","height":{height},"symbol":"{symbol}","interval":"{interval}",
-  "timezone":"Etc/UTC","theme":"{theme}","style":"1","locale":"en",
-  "toolbar_bg":"#0d1117","enable_publishing":false,"hide_top_toolbar":false,
-  "hide_legend":false,"hide_side_toolbar":true,"allow_symbol_change":false,
-  "save_image":true,"container_id":"{cid}",
-  "studies":{studies_json},"overrides":{ov_json}
+    "width":"100%","height":{height},"symbol":"{symbol}","interval":"{interval}",
+    "timezone":"Etc/UTC","theme":"{theme}","style":"1","locale":"en",
+    "toolbar_bg":"#0d1117","enable_publishing":false,"hide_top_toolbar":false,
+    "hide_legend":false,"hide_side_toolbar":true,"allow_symbol_change":false,
+    "save_image":true,"container_id":"{cid}",
+    "studies":{studies_json},"overrides":{ov_json}
 }});
 </script></div>"""
 
@@ -668,7 +845,7 @@ def tradingview_ticker_tape():
              {"proName":"TVC:DXY","title":"DXY"},
              {"proName":"TVC:US10Y","title":"10Y Yield"}]
     config=json.dumps({"symbols":symbols,"showSymbolLogo":True,
-        "isTransparent":True,"displayMode":"adaptive","colorTheme":"dark","locale":"en"})
+                       "isTransparent":True,"displayMode":"adaptive","colorTheme":"dark","locale":"en"})
     return f"""<div class="tradingview-widget-container" style="margin-bottom:12px">
 <div class="tradingview-widget-container__widget"></div>
 <script type="text/javascript"
@@ -677,9 +854,17 @@ def tradingview_ticker_tape():
 </script></div>"""
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_ai_analysis(price_key, api_key):
+def get_ai_analysis(price_key, api_key, gs_ratio=None, dxy=None, sentiment_score=None):
     snap = load_snapshot()
     fib = snap["fibs"]
+    extra_context = ""
+    if gs_ratio:
+        extra_context += f"\nGold/Silver Ratio: {gs_ratio:.1f} ({'Silver historically CHEAP - contrarian BUY signal' if gs_ratio>80 else 'Normal range'})"
+    if dxy:
+        extra_context += f"\nDXY (USD Index): {dxy:.2f} (Silver has inverse correlation with USD)"
+    if sentiment_score is not None:
+        sent_label = "Bullish" if sentiment_score > 0.2 else ("Bearish" if sentiment_score < -0.2 else "Neutral")
+        extra_context += f"\nNews Sentiment Score: {sentiment_score:.2f} ({sent_label})"
     prompt = ("Analyze this live COMEX silver (SI=F) market snapshot and provide a complete pro-trader setup.\n\n"
               "=== PRICE ACTION ===\n"
               "Current: $"+str(snap["price"])+"/oz | 24h Change: "+str(snap["change_pct"])+"%\n"
@@ -701,13 +886,14 @@ def get_ai_analysis(price_key, api_key):
               "=== FIBONACCI ===\n"
               "Swing: $"+str(fib["swing_low"])+" to $"+str(fib["swing_high"])+"\n"
               "23.6%="+str(fib["ret_236"])+" 38.2%="+str(fib["ret_382"])+" 50%="+str(fib["ret_500"])+" 61.8%="+str(fib["ret_618"])+"\n\n"
+              + ("=== MACRO CONTEXT ===" + extra_context + "\n\n" if extra_context else "") +
               "Respond with: MARKET BIAS, BUY SETUP (entry/targets/SL/RR), SELL SETUP, KEY LEVELS, PATTERN/SIGNAL, RISK RATING, TRADER NOTE.")
     resp = requests.post("https://api.anthropic.com/v1/messages",
-        headers={"x-api-key":api_key,"anthropic-version":"2023-06-01","content-type":"application/json"},
-        json={"model":AI_MODEL,"max_tokens":2500,
-              "system":"You are a senior COMEX silver futures trader. Give precise actionable setups. All prices USD/oz.",
-              "messages":[{"role":"user","content":prompt}]},
-        timeout=60)
+                         headers={"x-api-key":api_key,"anthropic-version":"2023-06-01","content-type":"application/json"},
+                         json={"model":AI_MODEL,"max_tokens":2500,
+                               "system":"You are a senior COMEX silver futures trader. Give precise actionable setups. All prices USD/oz.",
+                               "messages":[{"role":"user","content":prompt}]},
+                         timeout=60)
     resp.raise_for_status()
     return resp.json()["content"][0]["text"]
 
@@ -733,11 +919,19 @@ def score_bar_html(score, color):
             '<div class="score-bar-wrap"><div class="score-bar" style="width:'+str(score)+'%;background:'+color+'"></div></div>'
             '<div style="font-size:11px;color:#8b949e;margin-top:3px;text-align:center">Score: '+str(score)+'/100</div>'
             '</div>')
+
+def gauge_html(value, max_val, label, color, suffix=""):
+    pct = min(100, max(0, int(value/max_val*100)))
+    return (f'<div style="margin-bottom:12px">'
+            f'<div style="font-size:12px;color:#8b949e;margin-bottom:4px">{label}: {value}{suffix}</div>'
+            f'<div class="score-bar-wrap"><div class="score-bar" style="width:{pct}%;background:{color}"></div></div>'
+            f'</div>')
+
 # ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
 # ══════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown("## ⚡ Silver AI Agent PRO")
+    st.markdown("## ⚡ Silver AI Agent PRO v3")
     st.caption("COMEX Silver Futures (SI=F)")
     st.divider()
     snowflake_key = _get_secret()
@@ -746,12 +940,17 @@ with st.sidebar:
         api_key = snowflake_key
     else:
         api_key = st.text_input("Anthropic API Key", type="password",
-            placeholder="sk-ant-…",
-            help="On Snowflake this is injected from a Secret automatically.")
+                                placeholder="sk-ant-…",
+                                help="Enter your API key to unlock AI analysis.")
     auto_refresh = st.toggle("Auto-refresh (5 min)", value=False)
     run_btn = st.button("🔄 Refresh Now", use_container_width=True, type="primary")
     st.divider()
     forecast_days = st.slider("📅 Forecast Days", 1, 30, 7)
+    st.divider()
+    st.markdown("**Chart Overlays**")
+    show_gold_overlay = st.checkbox("Show Gold/Silver Ratio Chart", value=True)
+    show_dxy_overlay = st.checkbox("Show DXY vs Silver Chart", value=True)
+    show_news = st.checkbox("Show News Sentiment", value=True)
     st.divider()
     st.markdown("**Indicators**")
     st.markdown("EMA 20/50/200 · RSI · StochRSI")
@@ -760,6 +959,7 @@ with st.sidebar:
     st.markdown("OBV · VWAP · Ichimoku Cloud")
     st.markdown("Supertrend · Divergence Detection")
     st.markdown("Signal Score (composite 0-100)")
+    st.markdown("Gold/Silver Ratio · DXY Overlay")
     st.divider()
     st.markdown("**Prediction Models**")
     st.markdown("Linear · Polynomial · MA · Exp Smoothing · Momentum → Ensemble")
@@ -773,10 +973,10 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN PAGE
 # ══════════════════════════════════════════════════════════════════════════════
-st.markdown("<h1 style=color:#f0f6fc;margin-bottom:0>⚡ Silver AI Trading Agent PRO v2 + Price Predictor</h1>",
+st.markdown("<h1 style=color:#f0f6fc;margin-bottom:0>⚡ Silver AI Trading Agent PRO v3</h1>",
             unsafe_allow_html=True)
 st.caption("Live COMEX Silver Futures (SI=F) · Updated "+datetime.now().strftime("%H:%M:%S")
-           +" · Data: Yahoo Finance v8 API with retry logic")
+           +" · Enhanced: Gold/Silver Ratio · DXY Overlay · News Sentiment")
 st.divider()
 
 if run_btn:
@@ -798,18 +998,68 @@ chg = float(snap["change_pct"]) if snap.get("change_pct") is not None else 0.0
 chg_color = "bull" if chg >= 0 else "bear"
 arrow = "▲" if chg >= 0 else "▼"
 
-c1,c2,c3,c4,c5 = st.columns(5)
+# ── Top Metric Cards ──────────────────────────────────────────────────────────
+c1,c2,c3,c4,c5,c6 = st.columns(6)
+gs_ratio = snap.get("gs_ratio")
+gold_price = snap.get("gold_price")
+dxy_val = snap.get("dxy")
+
 cards = [
     ("💰 SILVER / OZ","$"+str(p), arrow+" "+str(abs(chg))+"%", chg_color),
     ("📅 Prev Close","$"+str(snap["prev_close"]),"Day: "+str(snap["d_low"])+" – "+str(snap["d_high"]),"neut"),
     ("📊 Week Range",str(snap["week_low"]),"↑ "+str(snap["week_high"]),"neut"),
     ("📆 Month Range",str(snap["month_low"]),"↑ "+str(snap["month_high"]),"neut"),
-    ("📐 ATR (vol)","$"+str(snap["d_atr"])+"/oz","Daily volatility","neut"),
+    ("🥇 Gold Price","$"+str(round(gold_price,2)) if gold_price else "—",
+     "G/S Ratio: "+str(gs_ratio) if gs_ratio else "Loading…","neut"),
+    ("💵 DXY (USD)","$"+str(round(dxy_val,2)) if dxy_val else "—",
+     "Inverse corr w/ Silver","neut"),
 ]
-for col,(label,val,sub,sc) in zip([c1,c2,c3,c4,c5],cards):
+for col,(label,val,sub,sc) in zip([c1,c2,c3,c4,c5,c6],cards):
     col.markdown(metric_card(label,val,sub,sc), unsafe_allow_html=True)
 
-st.markdown("<br>", unsafe_allow_html=True)# Signal Score
+st.markdown("<br>", unsafe_allow_html=True)
+
+# ── Gold/Silver Ratio Card ────────────────────────────────────────────────────
+if gs_ratio:
+    gs_color = "#3fb950" if gs_ratio > 80 else "#f85149" if gs_ratio < 55 else "#d29922"
+    gs_label = "Silver CHEAP — Contrarian BUY Zone" if gs_ratio > 80 else ("Silver EXPENSIVE" if gs_ratio < 55 else "Normal Range")
+    st.markdown(f'''<div class="ratio-card" style="margin-bottom:16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+        <div>
+            <div style="font-size:13px;color:#8b949e">⚖️ Gold / Silver Ratio</div>
+            <div style="font-size:36px;font-weight:800;color:{gs_color}">{gs_ratio:.1f}</div>
+            <div style="font-size:13px;color:{gs_color}">{gs_label}</div>
+        </div>
+        <div style="font-size:13px;color:#8b949e;max-width:400px;line-height:1.6">
+            Historically, ratio above 80 means silver is undervalued vs gold — a classic contrarian entry signal.
+            Ratio below 55 suggests silver is expensive relative to gold.
+            <br><b style="color:#c9d1d9">Current: {gs_ratio:.1f}x</b>
+        </div>
+    </div>
+    </div>''', unsafe_allow_html=True)
+
+# ── News Sentiment ────────────────────────────────────────────────────────────
+if show_news:
+    with st.spinner("Fetching news sentiment…"):
+        news_data = fetch_news_sentiment()
+    if news_data["headlines"]:
+        sent = news_data["sentiment_score"]
+        sent_color = "#3fb950" if sent > 0.2 else "#f85149" if sent < -0.2 else "#d29922"
+        sent_label = "BULLISH" if sent > 0.2 else "BEARISH" if sent < -0.2 else "NEUTRAL"
+        with st.expander(f"📰 News Sentiment: {sent_label} ({sent:+.2f}) — {news_data['count']} headlines", expanded=False):
+            st.markdown(f'<div style="margin-bottom:8px"><span style="color:{sent_color};font-weight:700;font-size:16px">{sent_label}</span>'
+                        f'<span style="color:#8b949e;font-size:12px;margin-left:8px">Sentiment Score: {sent:+.2f}</span></div>',
+                        unsafe_allow_html=True)
+            for h in news_data["headlines"]:
+                h_lower = h.lower()
+                bullish_kw = ["surge","rally","rise","gain","bull","up","high","strong","buy","support","breakout"]
+                bearish_kw = ["fall","drop","decline","bear","low","weak","sell","pressure","breakdown"]
+                bull = sum(1 for k in bullish_kw if k in h_lower)
+                bear_c = sum(1 for k in bearish_kw if k in h_lower)
+                dot = "🟢" if bull > bear_c else "🔴" if bear_c > bull else "⚪"
+                st.markdown(f'<div class="news-card">{dot} {h}</div>', unsafe_allow_html=True)
+
+# ── Signal Score ──────────────────────────────────────────────────────────────
 st.markdown("### 🎯 Signal Score — Composite Indicator Consensus")
 scoring = signal_score(snap)
 sc1, sc2 = st.columns([1, 2])
@@ -822,6 +1072,30 @@ with sc1:
                   +scoring["label"]+'</div></div>')
     st.markdown(score_html, unsafe_allow_html=True)
     st.markdown(score_bar_html(scoring["score"],scoring["color"]), unsafe_allow_html=True)
+    # Plotly gauge for better visual
+    fig_gauge = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=scoring["score"],
+        domain={"x":[0,1],"y":[0,1]},
+        gauge={
+            "axis":{"range":[0,100],"tickcolor":"#8b949e"},
+            "bar":{"color":scoring["color"]},
+            "bgcolor":"#21262d",
+            "bordercolor":"#30363d",
+            "steps":[
+                {"range":[0,40],"color":"rgba(248,81,73,0.2)"},
+                {"range":[40,60],"color":"rgba(210,153,34,0.2)"},
+                {"range":[60,100],"color":"rgba(63,185,80,0.2)"},
+            ],
+            "threshold":{"line":{"color":scoring["color"],"width":3},"thickness":0.75,"value":scoring["score"]}
+        },
+        number={"font":{"color":scoring["color"],"size":28},"suffix":"/100"},
+    ))
+    fig_gauge.update_layout(
+        template="plotly_dark",paper_bgcolor="#0d1117",plot_bgcolor="#0d1117",
+        height=200,margin=dict(l=20,r=20,t=20,b=0))
+    st.plotly_chart(fig_gauge, use_container_width=True)
+
 with sc2:
     st.markdown("**Indicator Breakdown**")
     breakdown = scoring["breakdown"]
@@ -836,7 +1110,7 @@ with sc2:
                          unsafe_allow_html=True)
 st.divider()
 
-# Chart Section
+# ── Chart Section ─────────────────────────────────────────────────────────────
 st.markdown("### 📊 Live Chart — Candlestick + Ichimoku + Supertrend + EMAs + MACD + RSI")
 st.caption("Green/Red fill = Ichimoku Cloud · Dots = Supertrend · EMA 20/50/200 · VWAP · S/R · Fibonacci")
 tab_d,tab_h,tab_tv = st.tabs(["📅 Daily (6 months)","⏱ Hourly (5 days)","📡 TradingView Live"])
@@ -855,17 +1129,40 @@ with tab_tv:
     tv_col1,tv_col2 = st.columns([3,1])
     with tv_col1:
         tv_interval = st.selectbox("Interval",["5","15","30","60","240","D","W"],index=3,
-            format_func=lambda x: {"5":"5 min","15":"15 min","30":"30 min","60":"1 Hour",
-                                   "240":"4 Hour","D":"Daily","W":"Weekly"}.get(x,x),
-            key="tv_interval")
+                                   format_func=lambda x: {"5":"5 min","15":"15 min","30":"30 min","60":"1 Hour",
+                                                          "240":"4 Hour","D":"Daily","W":"Weekly"}.get(x,x),
+                                   key="tv_interval")
     with tv_col2:
         tv_height = st.slider("Chart Height",400,800,580,50,key="tv_height")
     tv_html = tradingview_widget(symbol="OANDA:XAGUSD",theme="dark",height=tv_height,interval=tv_interval)
     components.html(tv_html, height=tv_height+30, scrolling=False)
-    st.caption("💡 TradingView chart includes live price, pre-built indicators and interactive tools.")
 st.divider()
 
-# Pro Indicators Table
+# ── Gold/Silver Ratio & DXY Charts ───────────────────────────────────────────
+if show_gold_overlay or show_dxy_overlay:
+    st.markdown("### ⚖️ Macro Context — Gold/Silver Ratio & USD Index")
+    col_gs, col_dxy = st.columns(2)
+    with col_gs:
+        if show_gold_overlay and snap.get("gold_daily") is not None:
+            fig_gs = make_gs_ratio_chart(snap["daily_df"], snap["gold_daily"])
+            if fig_gs:
+                st.plotly_chart(fig_gs, use_container_width=True)
+            else:
+                st.caption("Gold/Silver ratio data unavailable")
+        else:
+            st.caption("Enable 'Show Gold/Silver Ratio Chart' in sidebar")
+    with col_dxy:
+        if show_dxy_overlay and snap.get("dxy_daily") is not None:
+            fig_dxy = make_dxy_overlay_chart(snap["daily_df"], snap["dxy_daily"])
+            if fig_dxy:
+                st.plotly_chart(fig_dxy, use_container_width=True)
+            else:
+                st.caption("DXY overlay data unavailable")
+        else:
+            st.caption("Enable 'Show DXY vs Silver Chart' in sidebar")
+    st.divider()
+
+# ── Pro Indicators Table ──────────────────────────────────────────────────────
 st.markdown("### 📈 Pro Technical Indicators — Multi-Timeframe")
 left,right = st.columns(2)
 def ind_row(name,val_str,sig_label,sig_kind):
@@ -934,7 +1231,14 @@ with right:
     div_display=" | ".join(div_text) if div_text else "none detected"
     div_kind="bull" if "bullish" in (rsi_div+macd_div) else "bear" if "bearish" in (rsi_div+macd_div) else "neut"
     ind_row("Divergence",div_display,"DETECTED" if div_text else "NONE",div_kind)
-st.divider()# Multi-Timeframe Confluence Table
+    # Gold/Silver Ratio indicator
+    if gs_ratio:
+        gs_lbl = "SILVER CHEAP" if gs_ratio > 80 else ("SILVER EXPENSIVE" if gs_ratio < 55 else "NORMAL")
+        gs_kind = "bull" if gs_ratio > 80 else "bear" if gs_ratio < 55 else "neut"
+        ind_row("G/S Ratio","Ratio: "+str(gs_ratio),gs_lbl,gs_kind)
+st.divider()
+
+# ── Multi-Timeframe Confluence Table ──────────────────────────────────────────
 st.markdown("### 🔀 Multi-Timeframe Confluence Table")
 def tf_signal(rsi,stochrsi_k,wr,macd,macd_sig,adx,pdi,mdi):
     bulls=0; bears=0
@@ -955,51 +1259,54 @@ def tf_signal(rsi,stochrsi_k,wr,macd,macd_sig,adx,pdi,mdi):
     if ratio<=0.3: return "BEARISH","#f85149"
     return "NEUTRAL","#d29922"
 d_sig,d_col=tf_signal(snap.get("d_rsi"),snap.get("d_stochrsi_k"),snap.get("d_wr"),
-    snap.get("d_macd"),snap.get("d_macd_sig"),snap.get("d_adx"),snap.get("d_pdi"),snap.get("d_mdi"))
+                       snap.get("d_macd"),snap.get("d_macd_sig"),snap.get("d_adx"),snap.get("d_pdi"),snap.get("d_mdi"))
 h_sig,h_col=tf_signal(snap.get("h_rsi"),snap.get("h_stochrsi_k"),snap.get("h_wr"),
-    snap.get("h_macd"),snap.get("h_macd_sig"),snap.get("h_adx"),None,None)
+                       snap.get("h_macd"),snap.get("h_macd_sig"),snap.get("h_adx"),None,None)
 d_macd_arrow="▲" if (snap.get("d_macd") or 0)>(snap.get("d_macd_sig") or 0) else "▼"
 h_macd_arrow="▲" if (snap.get("h_macd") or 0)>(snap.get("h_macd_sig") or 0) else "▼"
 table_html=('<table class="conf-table">'
-    '<tr><th>Timeframe</th><th>RSI(14)</th><th>StochRSI K</th><th>Williams %R</th><th>CCI</th><th>ADX</th><th>MACD</th><th>Consensus</th></tr>'
-    '<tr><td><b>Daily</b></td>'
-    '<td>'+str(snap.get("d_rsi") or "—")+'</td>'
-    '<td>'+str(snap.get("d_stochrsi_k") or "—")+'</td>'
-    '<td>'+str(snap.get("d_wr") or "—")+'</td>'
-    '<td>'+str(snap.get("d_cci") or "—")+'</td>'
-    '<td>'+str(snap.get("d_adx") or "—")+'</td>'
-    '<td>'+d_macd_arrow+'</td>'
-    '<td style="color:'+d_col+';font-weight:700">'+d_sig+'</td></tr>'
-    '<tr><td><b>Hourly</b></td>'
-    '<td>'+str(snap.get("h_rsi") or "—")+'</td>'
-    '<td>'+str(snap.get("h_stochrsi_k") or "—")+'</td>'
-    '<td>'+str(snap.get("h_wr") or "—")+'</td>'
-    '<td>'+str(snap.get("h_cci") or "—")+'</td>'
-    '<td>'+str(snap.get("h_adx") or "—")+'</td>'
-    '<td>'+h_macd_arrow+'</td>'
-    '<td style="color:'+h_col+';font-weight:700">'+h_sig+'</td></tr>'
-    '</table>')
+            '<tr><th>Timeframe</th><th>RSI(14)</th><th>StochRSI K</th><th>Williams %R</th><th>CCI</th><th>ADX</th><th>MACD</th><th>Consensus</th></tr>'
+            '<tr><td><b>Daily</b></td>'
+            '<td>'+str(snap.get("d_rsi") or "—")+'</td>'
+            '<td>'+str(snap.get("d_stochrsi_k") or "—")+'</td>'
+            '<td>'+str(snap.get("d_wr") or "—")+'</td>'
+            '<td>'+str(snap.get("d_cci") or "—")+'</td>'
+            '<td>'+str(snap.get("d_adx") or "—")+'</td>'
+            '<td>'+d_macd_arrow+'</td>'
+            '<td style="color:'+d_col+';font-weight:700">'+d_sig+'</td></tr>'
+            '<tr><td><b>Hourly</b></td>'
+            '<td>'+str(snap.get("h_rsi") or "—")+'</td>'
+            '<td>'+str(snap.get("h_stochrsi_k") or "—")+'</td>'
+            '<td>'+str(snap.get("h_wr") or "—")+'</td>'
+            '<td>'+str(snap.get("h_cci") or "—")+'</td>'
+            '<td>'+str(snap.get("h_adx") or "—")+'</td>'
+            '<td>'+h_macd_arrow+'</td>'
+            '<td style="color:'+h_col+';font-weight:700">'+h_sig+'</td></tr>'
+            '</table>')
 st.markdown(table_html, unsafe_allow_html=True)
 st.divider()
-
-# Key Levels + Ichimoku
+# ── Key Levels + Ichimoku ──────────────────────────────────────────────────
 left2,right2 = st.columns(2)
 with left2:
     st.markdown("### 🔑 Key Price Levels")
     fib=snap["fibs"]
     st.markdown("**🔴 Resistance**")
     if snap["d_res"]:
-        st.markdown(" ".join(badge(v,"res") for v in snap["d_res"]), unsafe_allow_html=True)
-    else: st.caption("No daily resistance above price")
+        res_badges = " ".join([f'<span class="level-badge res-badge">${{v}}</span>' for v in snap["d_res"]])
+        st.markdown(res_badges, unsafe_allow_html=True)
+    else:
+        st.caption("No daily resistance above price")
     st.markdown("**🟢 Support**")
     if snap["d_sup"]:
-        st.markdown(" ".join(badge(v,"sup") for v in snap["d_sup"]), unsafe_allow_html=True)
-    else: st.caption("Price below all pivots — watch Fib extensions")
+        sup_badges = " ".join([f'<span class="level-badge sup-badge">${{v}}</span>' for v in snap["d_sup"]])
+        st.markdown(sup_badges, unsafe_allow_html=True)
+    else:
+        st.caption("Price below all pivots — watch Fib extensions")
     st.markdown("**🔵 Fibonacci (60-day swing)**")
     st.caption("Swing Low: $"+str(fib["swing_low"])+" → Swing High: $"+str(fib["swing_high"]))
     for label_,val in [("23.6%",fib["ret_236"]),("38.2%",fib["ret_382"]),
                         ("50.0%",fib["ret_500"]),("61.8%",fib["ret_618"]),("78.6%",fib["ret_786"]),
-                        ("Ext 127.2%",fib["ext_1272"]),("Ext 161.8%",fib["ext_1618"])]  :
+                        ("Ext 127.2%",fib["ext_1272"]),("Ext 161.8%",fib["ext_1618"])]:
         a,b = st.columns([1,1.5])
         a.caption(label_)
         b.markdown(badge(val,"fib"), unsafe_allow_html=True)
@@ -1016,7 +1323,9 @@ with right2:
     st.markdown("**Supertrend Level**")
     st_badge_kind="sup" if snap.get("d_st_dir")==-1 else "res"
     st.markdown(badge(snap.get("d_supertrend") or "—",st_badge_kind), unsafe_allow_html=True)
-st.divider()# ── Live Data Monitoring ──────────────────────────────────────────────────────
+st.divider()
+
+# ── Live Data Monitoring ────────────────────────────────────────────
 st.markdown("### 🟢 Live Data Monitoring System")
 st.caption("Real-time 5-min tick · Smart Alerts · Session Stats · Volume Analysis · Momentum Gauges")
 live = fetch_live_price()
@@ -1034,18 +1343,20 @@ else:
                 '<div class="metric-sub">'+sub+'</div></div>')
     m1,m2,m3,m4,m5,m6 = st.columns(6)
     m1.markdown(mon_card("⚡ LIVE PRICE","$"+str(live["price"]),
-        tick_arrow+" "+str(live["chg_1m"])+" ("+str(live["chg_1m_pct"])+"%) 1min",tick_color), unsafe_allow_html=True)
+                         tick_arrow+" "+str(live["chg_1m"])+" ("+str(live["chg_1m_pct"])+"%) 1min",tick_color), unsafe_allow_html=True)
     m2.markdown(mon_card("DAY CHANGE",day_arrow+" "+str(abs(live["chg_day_pct"]))+"%",
-        "vs open $"+str(live["session_open"]),day_color), unsafe_allow_html=True)
+                         "vs open $"+str(live["session_open"]),day_color), unsafe_allow_html=True)
     m3.markdown(mon_card("SESSION HIGH","$"+str(live["session_high"]),
-        "+"+str(round(live["session_high"]-live["session_open"],3))+" from open","#3fb950"), unsafe_allow_html=True)
+                         "+"+str(round(live["session_high"]-live["session_open"],3))+" from open","#3fb950"), unsafe_allow_html=True)
     m4.markdown(mon_card("SESSION LOW","$"+str(live["session_low"]),
-        str(round(live["session_low"]-live["session_open"],3))+" from open","#f85149"), unsafe_allow_html=True)
+                         str(round(live["session_low"]-live["session_open"],3))+" from open","#f85149"), unsafe_allow_html=True)
     m5.markdown(mon_card("SESSION RANGE",str(live["session_range_pct"])+"%",
-        "$"+str(live["session_low"])+" – $"+str(live["session_high"]),"#d29922"), unsafe_allow_html=True)
-    vc="#f85149" if live["vol_ratio"]>=2 else "#d29922" if live["vol_ratio"]>=1.3 else "#8b949e"
-    m6.markdown(mon_card("VOL RATIO",str(live["vol_ratio"])+"x",
-        "last "+str(live["last_vol"])+" / avg "+str(live["avg_vol"]),vc), unsafe_allow_html=True)
+                         "$"+str(live["session_low"])+" – $"+str(live["session_high"]),"#d29922"), unsafe_allow_html=True)
+    vol_ratio = live.get("vol_ratio", 0)
+    vol_display = str(vol_ratio)+"x" if vol_ratio > 0 else "Calculating…"
+    vc="#f85149" if vol_ratio>=2 else "#d29922" if vol_ratio>=1.3 else "#8b949e"
+    m6.markdown(mon_card("VOL RATIO",vol_display,
+                         "last "+str(live["last_vol"])+" / avg "+str(live["avg_vol"]),vc), unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
     col_alerts,col_gauge,col_ticks = st.columns([1.4,1,1.2])
     with col_alerts:
@@ -1080,10 +1391,10 @@ else:
                     '<div class="score-bar-wrap"><div class="score-bar" style="width:'+str(skp)+'%;background:'+skc+'"></div></div>'
                     '<div style="font-size:11px;color:#8b949e;margin-top:3px">'+skl+'</div></div>',
                     unsafe_allow_html=True)
-        vp=int(min(100,live["vol_ratio"]/3*100))
-        vgc="#f85149" if live["vol_ratio"]>=2 else "#d29922" if live["vol_ratio"]>=1.3 else "#3fb950"
-        vl="SPIKE" if live["vol_ratio"]>=2 else "ELEVATED" if live["vol_ratio"]>=1.3 else "NORMAL"
-        st.markdown('<div><div style="font-size:12px;color:#8b949e;margin-bottom:4px">Volume: '+str(live["vol_ratio"])+'x avg</div>'
+        vp=int(min(100,vol_ratio/3*100))
+        vgc="#f85149" if vol_ratio>=2 else "#d29922" if vol_ratio>=1.3 else "#3fb950"
+        vl="SPIKE" if vol_ratio>=2 else "ELEVATED" if vol_ratio>=1.3 else "NORMAL"
+        st.markdown('<div><div style="font-size:12px;color:#8b949e;margin-bottom:4px">Volume: '+str(vol_ratio)+'x avg</div>'
                     '<div class="score-bar-wrap"><div class="score-bar" style="width:'+str(vp)+'%;background:'+vgc+'"></div></div>'
                     '<div style="font-size:11px;color:#8b949e;margin-top:3px">'+vl+'</div></div>',
                     unsafe_allow_html=True)
@@ -1117,278 +1428,270 @@ else:
             yaxis=dict(showgrid=True,gridcolor="#1c2128",tickformat="$.3f",tickfont=dict(size=9)))
         st.caption("Last "+str(len(tick_prices))+" ticks")
         st.plotly_chart(fig_spark, use_container_width=True)
-st.divider()# ══════════════════════════════════════════════════════════════════════════════
-# 🔮 PRICE PREDICTOR SECTION (NEW)
-# ══════════════════════════════════════════════════════════════════════════════
-st.markdown("### 🔮 Price Predictor — 5-Model Ensemble Forecast")
-st.caption(f"Forecasting {forecast_days} trading days ahead · Linear · Polynomial · MA · Exponential Smoothing · Momentum → Ensemble")
+st.divider()
+# Price Predictor Section
+st.markdown('### 🔮 Price Predictor — 5-Model Ensemble Forecast')
+st.caption(f'Forecasting {forecast_days} trading days ahead · Linear · Polynomial · MA · Exponential Smoothing · Momentum')
 
-with st.spinner("Running forecast models…"):
-    fc = run_forecasts(snap["daily_df"], forecast_days)
+with st.spinner('Running forecast models…'):
+    fc = run_forecasts(snap['daily_df'], forecast_days)
 
-current = snap["price"]
-future_dates = fc["future_dates"]
-ensemble = fc["ensemble"]
-lin_pred  = fc["lin_pred"]
-poly_pred = fc["poly_pred"]
-ma_pred   = fc["ma_pred"]
-exp_pred  = fc["exp_pred"]
-mom_pred  = fc["mom_pred"]
-ci_upper  = fc["ci_upper"]
-ci_lower  = fc["ci_lower"]
-close_arr = fc["close"]
+current = snap['price']
+future_dates = fc['future_dates']
+ensemble = fc['ensemble']
+lin_pred = fc['lin_pred']
+poly_pred = fc['poly_pred']
+ma_pred = fc['ma_pred']
+exp_pred = fc['exp_pred']
+mom_pred = fc['mom_pred']
+ci_upper = fc['ci_upper']
+ci_lower = fc['ci_lower']
+close_arr = fc['close']
 
-# 3-column summary cards
 ens_target = ensemble[-1]
 ens_chg_pct = ((ens_target - current) / current) * 100
-ens_color = "#3fb950" if ens_target > current else "#f85149"
-ens_arrow = "▲" if ens_target > current else "▼"
+ens_color = '#3fb950' if ens_target > current else '#f85149'
+ens_arrow = '▲' if ens_target > current else '▼'
 
 pa, pb, pc = st.columns(3)
-pa.markdown(f'''<div class="pred-card">
-<div style="font-size:0.7rem;color:#8b949e;text-transform:uppercase;letter-spacing:1px;">Ensemble Target ({forecast_days}d)</div>
-<div style="font-size:2rem;font-weight:700;color:{ens_color};margin:8px 0">{ens_arrow} ${ens_target:.2f}</div>
-<div style="font-size:0.85rem;color:#8b949e">{ens_chg_pct:+.2f}% from current</div>
-</div>''', unsafe_allow_html=True)
-
-pb.markdown(f'''<div class="pred-card">
-<div style="font-size:0.7rem;color:#8b949e;text-transform:uppercase;letter-spacing:1px;">90% Confidence Range</div>
-<div style="font-size:1.4rem;font-weight:700;color:#f0f6fc;margin:8px 0">${ci_lower[-1]:.2f} – ${ci_upper[-1]:.2f}</div>
-<div style="font-size:0.85rem;color:#8b949e">±{((ci_upper[-1]-ci_lower[-1])/2/current*100):.1f}% uncertainty</div>
-</div>''', unsafe_allow_html=True)
-
-days_to_target = forecast_days
-pc.markdown(f'''<div class="pred-card">
-<div style="font-size:0.7rem;color:#8b949e;text-transform:uppercase;letter-spacing:1px;">Model Consensus</div>
-<div style="font-size:1.4rem;font-weight:700;color:#f0f6fc;margin:8px 0">{sum(1 for v in [lin_pred[-1],poly_pred[-1],ma_pred[-1],exp_pred[-1],mom_pred[-1]] if v>current)}/5 Bullish</div>
-<div style="font-size:0.85rem;color:#8b949e">models above current price</div>
-</div>''', unsafe_allow_html=True)
-
-# Forecast Chart Tabs
-pf_tab1, pf_tab2, pf_tab3 = st.tabs(["📈 Candlestick + Forecast", "🔀 All Models Comparison", "📊 Technical Oscillators"])
+pa.markdown(
+    f'<div class="pred-card"><div style="font-size:0.7rem;color:#8b949e">Ensemble Target ({forecast_days}d)</div>'
+    f'<div style="font-size:2rem;font-weight:700;color:{ens_color}">{ens_arrow} ${ens_target:.2f}</div>'
+    f'<div style="font-size:0.85rem;color:#8b949e">{ens_chg_pct:+.2f}% from current</div></div>',
+    unsafe_allow_html=True)
+pb.markdown(
+    f'<div class="pred-card"><div style="font-size:0.7rem;color:#8b949e">90% Confidence Range</div>'
+    f'<div style="font-size:1.4rem;font-weight:700;color:#f0f6fc">${ci_lower[-1]:.2f} – ${ci_upper[-1]:.2f}</div>'
+    f'<div style="font-size:0.85rem;color:#8b949e">±{((ci_upper[-1]-ci_lower[-1])/2/current*100):.1f}% uncertainty</div></div>',
+    unsafe_allow_html=True)
+bulls_count = sum(1 for v in [lin_pred[-1],poly_pred[-1],ma_pred[-1],exp_pred[-1],mom_pred[-1]] if v>current)
+pc.markdown(
+    f'<div class="pred-card"><div style="font-size:0.7rem;color:#8b949e">Model Consensus</div>'
+    f'<div style="font-size:1.4rem;font-weight:700;color:#f0f6fc">{bulls_count}/5 Bullish</div>'
+    f'<div style="font-size:0.85rem;color:#8b949e">models above current price</div></div>',
+    unsafe_allow_html=True)
+pf_tab1, pf_tab2, pf_tab3 = st.tabs(['📈 Candlestick + Forecast', '🔀 All Models Comparison', '📊 Technical Oscillators'])
 
 with pf_tab1:
-    # Candlestick + ensemble overlay
-    df_tail = snap["daily_df"].tail(60).copy()
+    df_tail = snap['daily_df'].tail(60).copy()
     if df_tail.index.tzinfo is not None:
-        df_tail.index = df_tail.index.tz_convert("UTC").tz_localize(None)
-    fig_pf = make_subplots(rows=2,cols=1,shared_xaxes=True,
-        row_heights=[0.75,0.25],vertical_spacing=0.05)
+        df_tail.index = df_tail.index.tz_convert('UTC').tz_localize(None)
+    fig_pf = make_subplots(rows=2,cols=1,shared_xaxes=True,row_heights=[0.75,0.25],vertical_spacing=0.05)
     fig_pf.add_trace(go.Candlestick(
-        x=df_tail.index,open=df_tail["Open"],high=df_tail["High"],
-        low=df_tail["Low"],close=df_tail["Close"],
-        increasing_line_color="#26a69a",increasing_fillcolor="#26a69a",
-        decreasing_line_color="#ef5350",decreasing_fillcolor="#ef5350",
-        name="Silver",line_width=1),row=1,col=1)
-    for col_,color,name in [
-        ("EMA20","#26a69a","EMA 20"),("EMA50","#ef5350","EMA 50"),("BB_Up","rgba(150,150,150,0.4)","BB Upper"),
-        ("BB_Lo","rgba(150,150,150,0.4)","BB Lower")]  :
+        x=df_tail.index,open=df_tail['Open'],high=df_tail['High'],
+        low=df_tail['Low'],close=df_tail['Close'],
+        increasing_line_color='#26a69a',increasing_fillcolor='#26a69a',
+        decreasing_line_color='#ef5350',decreasing_fillcolor='#ef5350',
+        name='Silver',line_width=1),row=1,col=1)
+    for col_,color,name in [('EMA20','#26a69a','EMA 20'),('EMA50','#ef5350','EMA 50'),
+                             ('BB_Up','rgba(150,150,150,0.4)','BB Upper'),('BB_Lo','rgba(150,150,150,0.4)','BB Lower')]:
         if col_ in df_tail.columns:
             s=df_tail[col_].dropna()
             fig_pf.add_trace(go.Scatter(x=s.index,y=s.values,line=dict(color=color,width=1.2),name=name),row=1,col=1)
-    # Forecast ensemble
-    fig_pf.add_trace(go.Scatter(
-        x=list(future_dates),y=ensemble,
-        line=dict(color="#c0c0c0",width=2.5,dash="dash"),name="Ensemble Forecast"),row=1,col=1)
-    # CI band
+    fig_pf.add_trace(go.Scatter(x=list(future_dates),y=ensemble,
+        line=dict(color='#c0c0c0',width=2.5,dash='dash'),name='Ensemble Forecast'),row=1,col=1)
     fig_pf.add_trace(go.Scatter(
         x=list(future_dates)+list(future_dates[::-1]),
         y=list(ci_upper)+list(ci_lower[::-1]),
-        fill="toself",fillcolor="rgba(192,192,192,0.12)",
-        line=dict(color="rgba(255,255,255,0)"),name="90% CI"),row=1,col=1)
-    # Volume
-    vol_colors=["rgba(38,166,154,0.5)" if df_tail["Close"].iloc[i]>=df_tail["Open"].iloc[i] else "rgba(239,83,80,0.5)"
+        fill='toself',fillcolor='rgba(192,192,192,0.12)',
+        line=dict(color='rgba(255,255,255,0)'),name='90% CI'),row=1,col=1)
+    vol_colors=['rgba(38,166,154,0.5)' if df_tail['Close'].iloc[i]>=df_tail['Open'].iloc[i] else 'rgba(239,83,80,0.5)'
                 for i in range(len(df_tail))]
-    fig_pf.add_trace(go.Bar(x=df_tail.index,y=df_tail["Volume"],
-        marker_color=vol_colors,name="Volume",opacity=0.7,showlegend=False),row=2,col=1)
-    fig_pf.add_hline(y=current,line_color="rgba(255,255,255,0.6)",line_dash="dot",
-        annotation_text=f" Now ${current:.2f}",annotation_font_color="#ffffff",row=1,col=1)
-    fig_pf.update_layout(
-        template="plotly_dark",paper_bgcolor="#0d1117",plot_bgcolor="#0d1117",
-        height=560,xaxis_rangeslider_visible=False,
-        legend=dict(orientation="h",y=1.02,yanchor="bottom",font=dict(size=10,color="#c9d1d9"),
-                    bgcolor="rgba(13,17,23,0.85)",bordercolor="#30363d",borderwidth=1),
-        hovermode="x unified")
-    fig_pf.update_yaxes(gridcolor="#1c2128")
+    fig_pf.add_trace(go.Bar(x=df_tail.index,y=df_tail['Volume'],
+        marker_color=vol_colors,name='Volume',opacity=0.7,showlegend=False),row=2,col=1)
+    fig_pf.add_hline(y=current,line_color='rgba(255,255,255,0.6)',line_dash='dot',
+        annotation_text=f' Now ${current:.2f}',annotation_font_color='#ffffff',row=1,col=1)
+    fig_pf.update_layout(template='plotly_dark',paper_bgcolor='#0d1117',plot_bgcolor='#0d1117',
+        height=560,xaxis_rangeslider_visible=False,hovermode='x unified')
+    fig_pf.update_yaxes(gridcolor='#1c2128')
     st.plotly_chart(fig_pf, use_container_width=True)
 
 with pf_tab2:
     fig_models = go.Figure()
     for pred,name,color,dash in [
-        (lin_pred,"Linear Regression","#ffa726","dot"),
-        (poly_pred,"Polynomial (deg 3)","#ab47bc","dot"),
-        (ma_pred,"MA Extrapolation","#42a5f5","dot"),
-        (exp_pred,"Exponential Smoothing","#26a69a","dot"),
-        (mom_pred,"Momentum","#ff7043","dot"),
-        (ensemble,"Ensemble (Average)","#c0c0c0","solid")]  :
-        fig_models.add_trace(go.Scatter(
-            x=list(future_dates),y=pred,
-            line=dict(color=color,width=2.5 if name.startswith("Ensemble") else 1.5,dash=dash),
-            name=name))
+        (lin_pred,'Linear Regression','#ffa726','dot'),
+        (poly_pred,'Polynomial (deg 3)','#ab47bc','dot'),
+        (ma_pred,'MA Extrapolation','#42a5f5','dot'),
+        (exp_pred,'Exponential Smoothing','#26a69a','dot'),
+        (mom_pred,'Momentum','#ff7043','dot'),
+        (ensemble,'Ensemble (Average)','#c0c0c0','solid')]:
+        fig_models.add_trace(go.Scatter(x=list(future_dates),y=pred,
+            line=dict(color=color,width=2.5 if name.startswith('Ensemble') else 1.5,dash=dash),name=name))
     fig_models.add_trace(go.Scatter(
         x=list(future_dates)+list(future_dates[::-1]),
         y=list(ci_upper)+list(ci_lower[::-1]),
-        fill="toself",fillcolor="rgba(192,192,192,0.08)",
-        line=dict(color="rgba(0,0,0,0)"),name="90% CI"))
-    fig_models.add_hline(y=current,line_dash="dash",line_color="#8b949e",
-        annotation_text=f" Current: ${current:.2f}",annotation_font_color="#8b949e")
-    fig_models.update_layout(
-        template="plotly_dark",paper_bgcolor="#0d1117",plot_bgcolor="#0d1117",
-        height=420,title="All Forecast Models Comparison",
-        legend=dict(font=dict(size=11,color="#c9d1d9"),bgcolor="rgba(13,17,23,0.85)",
-                    bordercolor="#30363d",borderwidth=1),
-        yaxis_gridcolor="#1c2128",hovermode="x unified")
+        fill='toself',fillcolor='rgba(192,192,192,0.08)',
+        line=dict(color='rgba(0,0,0,0)'),name='90% CI'))
+    fig_models.add_hline(y=current,line_dash='dash',line_color='#8b949e',
+        annotation_text=f' Current: ${current:.2f}',annotation_font_color='#8b949e')
+    fig_models.update_layout(template='plotly_dark',paper_bgcolor='#0d1117',plot_bgcolor='#0d1117',
+        height=420,title='All Forecast Models Comparison',
+        legend=dict(font=dict(size=11,color='#c9d1d9'),bgcolor='rgba(13,17,23,0.85)',bordercolor='#30363d',borderwidth=1),
+        yaxis_gridcolor='#1c2128',hovermode='x unified')
     st.plotly_chart(fig_models, use_container_width=True)
 
 with pf_tab3:
     fig_osc = make_subplots(rows=3,cols=1,shared_xaxes=True,vertical_spacing=0.06,
-        subplot_titles=("RSI (14)","MACD","ATR (14)"))
-    df_osc = snap["daily_df"].copy()
+                            subplot_titles=('RSI (14)','MACD','ATR (14)'))
+    df_osc = snap['daily_df'].copy()
     if df_osc.index.tzinfo is not None:
-        df_osc.index = df_osc.index.tz_convert("UTC").tz_localize(None)
-    if "RSI" in df_osc.columns:
-        fig_osc.add_trace(go.Scatter(x=df_osc.index,y=df_osc["RSI"].dropna(),
-            line=dict(color="#42a5f5",width=1.5),name="RSI"),row=1,col=1)
-        fig_osc.add_hrect(y0=70,y1=100,fillcolor="rgba(239,83,80,0.07)",line_width=0,row=1,col=1)
-        fig_osc.add_hrect(y0=0,y1=30,fillcolor="rgba(38,166,154,0.07)",line_width=0,row=1,col=1)
-        fig_osc.add_hline(y=70,line_dash="dash",line_color="#ef5350",row=1,col=1)
-        fig_osc.add_hline(y=30,line_dash="dash",line_color="#26a69a",row=1,col=1)
-    if "MACD" in df_osc.columns:
-        hist_s=df_osc["MACD_Hist"].dropna()
-        hist_colors=["rgba(38,166,154,0.6)" if v>=0 else "rgba(239,83,80,0.6)" for v in hist_s.values]
+        df_osc.index = df_osc.index.tz_convert('UTC').tz_localize(None)
+    if 'RSI' in df_osc.columns:
+        fig_osc.add_trace(go.Scatter(x=df_osc.index,y=df_osc['RSI'].dropna(),
+            line=dict(color='#42a5f5',width=1.5),name='RSI'),row=1,col=1)
+        fig_osc.add_hrect(y0=70,y1=100,fillcolor='rgba(239,83,80,0.07)',line_width=0,row=1,col=1)
+        fig_osc.add_hrect(y0=0,y1=30,fillcolor='rgba(38,166,154,0.07)',line_width=0,row=1,col=1)
+        fig_osc.add_hline(y=70,line_dash='dash',line_color='#ef5350',row=1,col=1)
+        fig_osc.add_hline(y=30,line_dash='dash',line_color='#26a69a',row=1,col=1)
+    if 'MACD' in df_osc.columns:
+        hist_s=df_osc['MACD_Hist'].dropna()
+        hist_colors=['rgba(38,166,154,0.6)' if v>=0 else 'rgba(239,83,80,0.6)' for v in hist_s.values]
         fig_osc.add_trace(go.Bar(x=hist_s.index,y=hist_s.values,
-            marker_color=hist_colors,name="Hist",showlegend=False),row=2,col=1)
-        fig_osc.add_trace(go.Scatter(x=df_osc.index,y=df_osc["MACD"].dropna(),
-            line=dict(color="#42a5f5",width=1.2),name="MACD"),row=2,col=1)
-        fig_osc.add_trace(go.Scatter(x=df_osc.index,y=df_osc["MACD_Sig"].dropna(),
-            line=dict(color="#ffa726",width=1.2,dash="dot"),name="Signal"),row=2,col=1)
-    if "ATR" in df_osc.columns:
-        fig_osc.add_trace(go.Scatter(x=df_osc.index,y=df_osc["ATR"].dropna(),
-            line=dict(color="#c0c0c0",width=1.5),name="ATR"),row=3,col=1)
-    fig_osc.update_layout(template="plotly_dark",paper_bgcolor="#0d1117",
-        plot_bgcolor="#0d1117",height=520)
-    fig_osc.update_yaxes(gridcolor="#1c2128")
+            marker_color=hist_colors,name='Hist',showlegend=False),row=2,col=1)
+        fig_osc.add_trace(go.Scatter(x=df_osc.index,y=df_osc['MACD'].dropna(),
+            line=dict(color='#42a5f5',width=1.2),name='MACD'),row=2,col=1)
+        fig_osc.add_trace(go.Scatter(x=df_osc.index,y=df_osc['MACD_Sig'].dropna(),
+            line=dict(color='#ffa726',width=1.2,dash='dot'),name='Signal'),row=2,col=1)
+    if 'ATR' in df_osc.columns:
+        fig_osc.add_trace(go.Scatter(x=df_osc.index,y=df_osc['ATR'].dropna(),
+            line=dict(color='#c0c0c0',width=1.5),name='ATR'),row=3,col=1)
+    fig_osc.update_layout(template='plotly_dark',paper_bgcolor='#0d1117',plot_bgcolor='#0d1117',height=520)
+    fig_osc.update_yaxes(gridcolor='#1c2128')
     st.plotly_chart(fig_osc, use_container_width=True)
-
 # Day-by-Day Forecast Table
-st.markdown("### 🗓️ Day-by-Day Price Forecast")
+st.markdown('### 🗓️ Day-by-Day Price Forecast')
 pred_df = pd.DataFrame({
-    "Date": future_dates.strftime("%a %b %d, %Y"),
-    "Linear ($)": [f"${v:.2f}" for v in lin_pred],
-    "Polynomial ($)": [f"${v:.2f}" for v in poly_pred],
-    "MA Extrap ($)": [f"${v:.2f}" for v in ma_pred],
-    "Exp Smooth ($)": [f"${v:.2f}" for v in exp_pred],
-    "Momentum ($)": [f"${v:.2f}" for v in mom_pred],
-    "Ensemble ($)": [f"${v:.2f}" for v in ensemble],
-    "Upper CI ($)": [f"${v:.2f}" for v in ci_upper],
-    "Lower CI ($)": [f"${v:.2f}" for v in ci_lower],
-    "Change from Now": [f"{((v-current)/current)*100:+.2f}%" for v in ensemble],
+    'Date': future_dates.strftime('%a %b %d, %Y'),
+    'Linear ($)': [f'${v:.2f}' for v in lin_pred],
+    'Polynomial ($)': [f'${v:.2f}' for v in poly_pred],
+    'MA Extrap ($)': [f'${v:.2f}' for v in ma_pred],
+    'Exp Smooth ($)': [f'${v:.2f}' for v in exp_pred],
+    'Momentum ($)': [f'${v:.2f}' for v in mom_pred],
+    'Ensemble ($)': [f'${v:.2f}' for v in ensemble],
+    'Upper CI ($)': [f'${v:.2f}' for v in ci_upper],
+    'Lower CI ($)': [f'${v:.2f}' for v in ci_lower],
+    'Change from Now': [f'{((v-current)/current)*100:+.2f}%' for v in ensemble],
 })
-st.dataframe(pred_df.set_index("Date"), use_container_width=True)
+st.dataframe(pred_df.set_index('Date'), use_container_width=True)
 
-# Signal Dashboard from Predictor
-st.markdown("### 🎯 Forecast Signal Dashboard")
-rsi_now=snap.get("d_rsi") or 50
-macd_now=snap.get("d_macd") or 0; sig_now=snap.get("d_macd_sig") or 0
-ma5_val=snap["daily_df"]["EMA20"].iloc[-1] if "EMA20" in snap["daily_df"].columns else current
-ma50_val=snap["daily_df"]["EMA50"].iloc[-1] if "EMA50" in snap["daily_df"].columns else current
+# Forecast Signal Dashboard
+st.markdown('### 🎯 Forecast Signal Dashboard')
+rsi_now=snap.get('d_rsi') or 50
+macd_now=snap.get('d_macd') or 0; sig_now=snap.get('d_macd_sig') or 0
+ma5_val=snap['daily_df']['EMA20'].iloc[-1] if 'EMA20' in snap['daily_df'].columns else current
+ma50_val=snap['daily_df']['EMA50'].iloc[-1] if 'EMA50' in snap['daily_df'].columns else current
 
 def signal_card(col, title, signal, value):
-    col.markdown(f'''<div class="pred-card">
-<div style="font-size:0.65rem;color:#8b949e;text-transform:uppercase;letter-spacing:1px;">{title}</div>
-<div style="font-size:0.9rem;font-weight:600;color:#f0f6fc;margin:8px 0;">{signal}</div>
-<div style="font-size:0.75rem;color:#6e7681;">{value}</div>
-</div>''', unsafe_allow_html=True)
+    col.markdown(
+        f'<div class="pred-card">'
+        f'<div style="font-size:0.65rem;color:#8b949e;text-transform:uppercase;letter-spacing:1px;">{title}</div>'
+        f'<div style="font-size:0.9rem;font-weight:600;color:#f0f6fc;margin:8px 0;">{signal}</div>'
+        f'<div style="font-size:0.75rem;color:#6e7681;">{value}</div>'
+        f'</div>', unsafe_allow_html=True)
 
 fs1,fs2,fs3,fs4,fs5 = st.columns(5)
-signal_card(fs1,"RSI Signal",
-    "Oversold — Bullish 🟢" if rsi_now<35 else ("Overbought — Bearish 🔴" if rsi_now>65 else "Neutral ⚪"),
-    f"RSI: {rsi_now:.1f}")
-signal_card(fs2,"MACD Cross",
-    "Bullish Cross 🟢" if macd_now>sig_now else "Bearish Cross 🔴",
-    f"MACD {macd_now:.3f}")
-signal_card(fs3,"EMA Trend",
-    "Uptrend 🟢" if current>ma5_val>ma50_val else ("Downtrend 🔴" if current<ma5_val<ma50_val else "Mixed ⚪"),
-    f"EMA20 ${ma5_val:.2f}")
-signal_card(fs4,"BB Position",
-    "Near Upper 🔴" if current>(snap.get("d_bb_up") or current)*0.98 else
-    ("Near Lower 🟢" if current<(snap.get("d_bb_lo") or current)*1.02 else "Mid Band ⚪"),
-    f"Mid ${snap.get('d_bb_mid') or 0:.2f}")
-signal_card(fs5,"Forecast Bias",
-    "📈 Bullish" if ensemble[-1]>current else "📉 Bearish",
-    f"Target ${ensemble[-1]:.2f}")
+signal_card(fs1,'RSI Signal',
+    'Oversold — Bullish 🟢' if rsi_now<35 else ('Overbought — Bearish 🔴' if rsi_now>65 else 'Neutral ⚪'),
+    f'RSI: {rsi_now:.1f}')
+signal_card(fs2,'MACD Cross',
+    'Bullish Cross 🟢' if macd_now>sig_now else 'Bearish Cross 🔴',
+    f'MACD {macd_now:.3f}')
+signal_card(fs3,'EMA Trend',
+    'Uptrend 🟢' if current>ma5_val>ma50_val else ('Downtrend 🔴' if current<ma5_val<ma50_val else 'Mixed ⚪'),
+    f'EMA20 ${ma5_val:.2f}')
+signal_card(fs4,'BB Position',
+    'Near Upper 🔴' if current>(snap.get('d_bb_up') or current)*0.98 else
+    ('Near Lower 🟢' if current<(snap.get('d_bb_lo') or current)*1.02 else 'Mid Band ⚪'),
+    f'Mid ${snap.get("d_bb_mid") or 0:.2f}')
+signal_card(fs5,'Forecast Bias',
+    '📈 Bullish' if ensemble[-1]>current else '📉 Bearish',
+    f'Target ${ensemble[-1]:.2f}')
 st.divider()
 
 # Correlation with Related Assets
-st.markdown("### 📡 Silver Correlation with Related Assets")
-with st.spinner("Fetching correlation data…"):
+st.markdown('### 📡 Silver Correlation with Related Assets')
+with st.spinner('Fetching correlation data…'):
     try:
-        corr_data = get_correlation_data("1y")
-        silver_ret = snap["daily_df"]["Close"].pct_change().dropna()
+        corr_data = get_correlation_data('1y')
+        silver_ret = snap['daily_df']['Close'].pct_change().dropna()
         corr_results = {}
         for name,ret in corr_data.items():
-            aligned = pd.concat([silver_ret,ret],axis=1,join="inner")
+            aligned = pd.concat([silver_ret,ret],axis=1,join='inner')
             if len(aligned)>10:
                 c_val = aligned.corr().iloc[0,1]
                 corr_results[name] = round(c_val,3)
         if corr_results:
-            corr_df = pd.DataFrame(list(corr_results.items()),columns=["Asset","Correlation with Silver"])
-            corr_df = corr_df.sort_values("Correlation with Silver",ascending=False)
-            fig_corr = px.bar(corr_df,x="Asset",y="Correlation with Silver",
-                color="Correlation with Silver",color_continuous_scale="RdYlGn",
-                title="Silver 1-Year Correlation with Key Assets",range_color=[-1,1])
-            fig_corr.update_layout(template="plotly_dark",height=320,
-                paper_bgcolor="#0d1117",plot_bgcolor="#0d1117",
-                yaxis_gridcolor="#1c2128")
+            corr_df = pd.DataFrame(list(corr_results.items()),columns=['Asset','Correlation with Silver'])
+            corr_df = corr_df.sort_values('Correlation with Silver',ascending=False)
+            fig_corr = px.bar(corr_df,x='Asset',y='Correlation with Silver',
+                color='Correlation with Silver',color_continuous_scale='RdYlGn',
+                title='Silver 1-Year Correlation with Key Assets',range_color=[-1,1])
+            fig_corr.update_layout(template='plotly_dark',height=320,
+                paper_bgcolor='#0d1117',plot_bgcolor='#0d1117',
+                yaxis_gridcolor='#1c2128')
             st.plotly_chart(fig_corr, use_container_width=True)
-    except Exception: st.caption("Correlation data unavailable")
+    except Exception: st.caption('Correlation data unavailable')
 
-# Returns Distribution + Risk Metrics
-st.markdown("### 📊 Returns Analysis & Risk Metrics")
+# Returns Distribution & Risk Metrics
+st.markdown('### 📊 Returns Analysis & Risk Metrics')
 col_a,col_b = st.columns(2)
 with col_a:
-    ret_series = snap["daily_df"]["Close"].pct_change().dropna()*100
+    ret_series = snap['daily_df']['Close'].pct_change().dropna()*100
     fig_hist = px.histogram(ret_series,nbins=60,
-        title="Daily Returns Distribution (%)",color_discrete_sequence=["#c0c0c0"])
-    fig_hist.add_vline(x=0,line_dash="dash",line_color="white")
-    fig_hist.update_layout(template="plotly_dark",height=280,
-        paper_bgcolor="#0d1117",plot_bgcolor="#0d1117",
-        showlegend=False,xaxis_title="Return (%)",yaxis_title="Frequency")
+        title='Daily Returns Distribution (%)',color_discrete_sequence=['#c0c0c0'])
+    fig_hist.add_vline(x=0,line_dash='dash',line_color='white')
+    fig_hist.update_layout(template='plotly_dark',height=280,
+        paper_bgcolor='#0d1117',plot_bgcolor='#0d1117',
+        showlegend=False,xaxis_title='Return (%)',yaxis_title='Frequency')
     st.plotly_chart(fig_hist, use_container_width=True)
 with col_b:
-    ret_clean = snap["daily_df"]["Close"].pct_change().dropna()
+    ret_clean = snap['daily_df']['Close'].pct_change().dropna()
     sharpe_r = (ret_clean.mean()/ret_clean.std())*np.sqrt(252)
     var_95 = np.percentile(ret_clean,5)*100
-    max_dd = ((snap["daily_df"]["Close"]/snap["daily_df"]["Close"].cummax())-1).min()*100
+    max_dd = ((snap['daily_df']['Close']/snap['daily_df']['Close'].cummax())-1).min()*100
     avg_ret_ann = ret_clean.mean()*252*100
     vol_ann_pct = ret_clean.std()*np.sqrt(252)*100
     risk_df = pd.DataFrame({
-        "Metric":["Annualized Return","Sharpe Ratio","VaR 95% (Daily)","Max Drawdown","Annual Volatility"],
-        "Value":[f"{avg_ret_ann:.1f}%",f"{sharpe_r:.2f}",f"{var_95:.2f}%",f"{max_dd:.1f}%",f"{vol_ann_pct:.1f}%"]
+        'Metric':['Annualized Return','Sharpe Ratio','VaR 95% (Daily)','Max Drawdown','Annual Volatility'],
+        'Value':[f'{avg_ret_ann:.1f}%',f'{sharpe_r:.2f}',f'{var_95:.2f}%',f'{max_dd:.1f}%',f'{vol_ann_pct:.1f}%']
     })
-    st.dataframe(risk_df.set_index("Metric"), use_container_width=True, height=230)
-st.divider()# ── AI Analysis ───────────────────────────────────────────────────────────────
-st.markdown("### 🤖 AI Trade Analysis & Targets")
-st.caption("Powered by Claude "+AI_MODEL+" · All pro indicators included · Cached 5 min")
+    st.dataframe(risk_df.set_index('Metric'), use_container_width=True, height=230)
+st.divider()
+# AI Analysis Section
+st.markdown('### 🤖 AI Trade Analysis & Targets')
+st.caption('Powered by Claude '+AI_MODEL+' · All pro indicators included · Gold/Silver Ratio · DXY · Cached 5 min')
 if not api_key:
-    st.info("👈 Enter your Anthropic API key in the sidebar to unlock AI trade analysis.")
+    st.info('👈 Enter your Anthropic API key in the sidebar to unlock AI trade analysis.')
+    st.markdown('<div class="analysis-box"><b>What AI Analysis Provides:</b>\n\n'
+                '• MARKET BIAS with conviction level\n'
+                '• BUY SETUP — Entry zone, targets (T1/T2/T3), stop loss, risk:reward\n'
+                '• SELL SETUP — Entry zone, targets, stop loss, risk:reward\n'
+                '• KEY LEVELS to watch\n'
+                '• PATTERN/SIGNAL identification\n'
+                '• RISK RATING (1-10)\n'
+                '• TRADER NOTE with macro context (G/S Ratio, DXY, Sentiment)\n'
+                '</div>', unsafe_allow_html=True)
 else:
-    with st.spinner("Claude is analysing the market with all pro indicators…"):
+    with st.spinner('Claude is analysing the market with all pro indicators…'):
         try:
-            analysis = get_ai_analysis(snap["price"], api_key)
+            analysis = get_ai_analysis(snap['price'], api_key,
+                gs_ratio=snap.get('gs_ratio'),
+                dxy=snap.get('dxy'),
+                sentiment_score=news_data.get('sentiment_score') if show_news and 'news_data' in dir() else None)
             st.markdown('<div class="analysis-box">'+analysis+'</div>', unsafe_allow_html=True)
         except requests.HTTPError as e:
             if e.response is not None and e.response.status_code==401:
-                st.error("Invalid Anthropic API key.")
+                st.error('Invalid Anthropic API key.')
             else:
-                st.error("API error: "+str(e))
+                st.error('API error: '+str(e))
         except Exception as e:
-            st.error("AI analysis failed: "+str(e))
+            st.error('AI analysis failed: '+str(e))
 
 st.divider()
 st.markdown(
     '<div style="text-align:center;color:#8b949e;font-size:0.78rem;">'
-    '⚡ Silver AI Trading Agent PRO v2 + Price Predictor · '
+    '⚡ Silver AI Trading Agent PRO v3 · '
+    'New: Gold/Silver Ratio · DXY Overlay · News Sentiment · Gauge Charts · HTML Bug Fixed · '
     'Data: Yahoo Finance · AI: Claude · '
     'Forecasting: Linear · Polynomial · MA · Exp Smoothing · Momentum Ensemble · '
     '⚠️ Educational use only — not financial advice.</div>',
