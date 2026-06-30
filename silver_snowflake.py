@@ -1581,7 +1581,8 @@ else:
         dot_map={"red":"U0001f534","green":"U0001f7e2","yellow":"U0001f7e1"}
         for al in alerts:
             dot=dot_map.get(al["level"],"U0001f7e1")
-            st.markdown(dot+" "+al["msg"])    with col_gauge:
+            st.markdown(dot+" "+al["msg"])
+    with col_gauge:
         st.markdown("#### **Momentum Gauges**")
         span=live["session_high"]-live["session_low"]
         pos=int(((live["price"]-live["session_low"])/span*100)) if span else 50
