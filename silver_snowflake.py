@@ -1681,7 +1681,8 @@ pc.markdown(
     f'<div class="pred-card"><div style="font-size:0.7rem;color:#8b949e">Model Consensus</div>'
     f'<div style="font-size:1.4rem;font-weight:700;color:#f0f6fc">{bulls_count}/5 Bullish</div>'
     f'<div style="font-size:0.85rem;color:#8b949e">models above current price</div></div>',
-    unsafe_allow_html=True)pf_tab1, pf_tab2, pf_tab3 = st.tabs(['U0001f4c8 Candlestick + Forecast', 'U0001f500 All Models Comparison', 'U0001f4ca Technical Oscillators'])
+    unsafe_allow_html=True)
+pf_tab1, pf_tab2, pf_tab3 = st.tabs(['U0001f4c8 Candlestick + Forecast', 'U0001f500 All Models Comparison', 'U0001f4ca Technical Oscillators'])
 
 with pf_tab1:
     df_tail = snap['daily_df'].tail(60).copy()
