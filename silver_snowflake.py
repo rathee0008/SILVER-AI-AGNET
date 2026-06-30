@@ -1078,16 +1078,16 @@ with st.sidebar:
     st.divider()
     snowflake_key = _get_secret()
     if snowflake_key:
-        st.success("U0001f510 API key loaded from Snowflake Secret")
+        st.success("🔐 API key loaded from Snowflake Secret")
         api_key = snowflake_key
     else:
         api_key = st.text_input("Anthropic API Key", type="password",
                                 placeholder="sk-ant-…",
                                 help="Enter your API key to unlock AI analysis.")
     auto_refresh = st.toggle("Auto-refresh (5 min)", value=False)
-    run_btn = st.button("U0001f504 Refresh Now", use_container_width=True, type="primary")
+    run_btn = st.button("🔄 Refresh Now", use_container_width=True, type="primary")
     st.divider()
-    forecast_days = st.slider("U0001f4c5 Forecast Days", 1, 30, 7)
+    forecast_days = st.slider("📅 Forecast Days", 1, 30, 7)
     st.divider()
     st.markdown("**Chart Overlays**")
     show_gold_overlay = st.checkbox("Show Gold/Silver Ratio Chart", value=True)
@@ -1109,7 +1109,7 @@ with st.sidebar:
     st.markdown("Linear · Polynomial · MA · Exp Smoothing · Momentum → Ensemble")
     st.divider()
     if _IN_SNOWFLAKE:
-        st.caption("U0001f3d4 Running inside Snowflake")
+        st.caption("🏔 Running inside Snowflake")
     st.caption("Data: Yahoo Finance | AI: Claude")
     st.divider()
     st.warning("⚠️ Educational use only. Not financial advice.")
@@ -1149,13 +1149,13 @@ gold_price = snap.get("gold_price")
 dxy_val = snap.get("dxy")
 
 cards = [
-    ("U0001f4b0 SILVER / OZ","$"+str(p), arrow+" "+str(abs(chg))+"%", chg_color),
-    ("U0001f4c5 Prev Close","$"+str(snap["prev_close"]),"Day: "+str(snap["d_low"])+" – "+str(snap["d_high"]),"neut"),
-    ("U0001f4ca Week Range",str(snap["week_low"]),"↑ "+str(snap["week_high"]),"neut"),
-    ("U0001f4c6 Month Range",str(snap["month_low"]),"↑ "+str(snap["month_high"]),"neut"),
-    ("U0001f947 Gold Price","$"+str(round(gold_price,2)) if gold_price else "—",
+    ("💰 SILVER / OZ","$"+str(p), arrow+" "+str(abs(chg))+"%", chg_color),
+    ("📅 Prev Close","$"+str(snap["prev_close"]),"Day: "+str(snap["d_low"])+" – "+str(snap["d_high"]),"neut"),
+    ("📊 Week Range",str(snap["week_low"]),"↑ "+str(snap["week_high"]),"neut"),
+    ("📆 Month Range",str(snap["month_low"]),"↑ "+str(snap["month_high"]),"neut"),
+    ("🥇 Gold Price","$"+str(round(gold_price,2)) if gold_price else "—",
      "G/S Ratio: "+str(gs_ratio) if gs_ratio else "Loading…","neut"),
-    ("U0001f4b5 DXY (USD)","$"+str(round(dxy_val,2)) if dxy_val else "—",
+    ("💵 DXY (USD)","$"+str(round(dxy_val,2)) if dxy_val else "—",
      "Inverse corr w/ Silver","neut"),
 ]
 for col,(label,val,sub,sc) in zip([c1,c2,c3,c4,c5,c6],cards):
@@ -1191,7 +1191,7 @@ if show_news:
         sent = news_data["sentiment_score"]
         sent_color = "#3fb950" if sent > 0.2 else "#f85149" if sent < -0.2 else "#d29922"
         sent_label = "BULLISH" if sent > 0.2 else "BEARISH" if sent < -0.2 else "NEUTRAL"
-        with st.expander(f"U0001f4f0 News Sentiment: {sent_label} ({sent:+.2f}) — {news_data['count']} headlines", expanded=False):
+        with st.expander(f"📰 News Sentiment: {sent_label} ({sent:+.2f}) — {news_data['count']} headlines", expanded=False):
             st.markdown(f'<div style="margin-bottom:8px"><span style="color:{sent_color};font-weight:700;font-size:16px">{sent_label}</span>'
                         f'<span style="color:#8b949e;font-size:12px;margin-left:8px">Sentiment Score: {sent:+.2f}</span></div>',
                         unsafe_allow_html=True)
@@ -1201,11 +1201,11 @@ if show_news:
                 bearish_kw = ["fall","drop","decline","bear","low","weak","sell","pressure","breakdown"]
                 bull = sum(1 for k in bullish_kw if k in h_lower)
                 bear_c = sum(1 for k in bearish_kw if k in h_lower)
-                dot = "U0001f7e2" if bull > bear_c else "U0001f534" if bear_c > bull else "⚪"
+                dot = "🟢" if bull > bear_c else "🔴" if bear_c > bull else "⚪"
                 st.markdown(f'<div class="news-card">{dot} {h}</div>', unsafe_allow_html=True)
 
 # ── Signal Score ───────────────────────────────────────────────────────────────────────────────
-st.markdown("### U0001f3af Signal Score — Composite Indicator Consensus")
+st.markdown("### 🎯 Signal Score — Composite Indicator Consensus")
 scoring = signal_score(snap)
 sc1, sc2 = st.columns([1, 2])
 with sc1:
@@ -1253,9 +1253,9 @@ with sc2:
                          unsafe_allow_html=True)
 st.divider()
 # ── Chart Section ──────────────────────────────────────────────────────────────────────────────
-st.markdown("### U0001f4ca Live Chart — Candlestick + Ichimoku + Supertrend + EMAs + MACD + RSI")
+st.markdown("### 📊 Live Chart — Candlestick + Ichimoku + Supertrend + EMAs + MACD + RSI")
 st.caption("Green/Red fill = Ichimoku Cloud · Dots = Supertrend · EMA 20/50/200 · VWAP · S/R · Fibonacci")
-tab_d,tab_h,tab_tv = st.tabs(["U0001f4c5 Daily (6 months)","⏱ Hourly (5 days)","U0001f4e1 TradingView Live"])
+tab_d,tab_h,tab_tv = st.tabs(["📅 Daily (6 months)","⏱ Hourly (5 days)","📡 TradingView Live"])
 with tab_d:
     fig_d = make_chart(snap["daily_df"].tail(120),snap["d_sup"],snap["d_res"],
                        snap["fibs"],snap["price"],timeframe="Daily")
@@ -1265,7 +1265,7 @@ with tab_h:
                        snap["fibs"],snap["price"],show_ichimoku=False,timeframe="Hourly")
     st.plotly_chart(fig_h, use_container_width=True)
 with tab_tv:
-    st.markdown("⁠#### U0001f4e1 TradingView Live Silver Chart")
+    st.markdown("⁠#### 📡 TradingView Live Silver Chart")
     st.caption("Live data from TradingView · COMEX:SI1! · Hourly candles")
     components.html(tradingview_ticker_tape(), height=60, scrolling=False)
     tv_col1,tv_col2 = st.columns([3,1])
@@ -1305,7 +1305,7 @@ if show_gold_overlay or show_dxy_overlay:
 
 # ── ETF Volume Flow Section ───────────────────────────────────────────────────────────────
 if show_etf_vflow:
-    st.markdown("### U0001f4ca Silver ETF Volume Flow — SLV · SIVR · PSLV · AGQ · ZSL")
+    st.markdown("### 📊 Silver ETF Volume Flow — SLV · SIVR · PSLV · AGQ · ZSL")
     st.caption("Cumulative dollar flow, daily volume, OBV comparison · 3-month window · ZSL = inverse/bear ETF")
     with st.spinner("Fetching ETF volume flow data…"):
         try:
@@ -1316,7 +1316,7 @@ if show_etf_vflow:
     if etf_summary:
         bias_colors = {"inflow":"#3fb950","outflow":"#f85149","neutral":"#d29922"}
         bias_color = bias_colors.get(etf_bias,"#d29922")
-        bias_icons = {"inflow":"U0001f7e2","outflow":"U0001f534","neutral":"⚪"}
+        bias_icons = {"inflow":"🟢","outflow":"🔴","neutral":"⚪"}
         bias_icon = bias_icons.get(etf_bias,"⚪")
         bias_labels = {"inflow":"NET INFLOW — Bullish Accumulation","outflow":"NET OUTFLOW — Bearish Distribution","neutral":"MIXED / NEUTRAL"}
         bias_label = bias_labels.get(etf_bias,"NEUTRAL")
@@ -1351,7 +1351,7 @@ if show_etf_vflow:
                 '</div>',
                 unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
-        etf_tab1, etf_tab2 = st.tabs(["U0001f4ca Volume Flow Chart", "U0001f4c8 OBV Comparison"])
+        etf_tab1, etf_tab2 = st.tabs(["📊 Volume Flow Chart", "📈 OBV Comparison"])
         with etf_tab1:
             etf_select = st.multiselect(
                 "Select ETFs to display:",
@@ -1378,7 +1378,7 @@ if show_etf_vflow:
         st.warning("ETF volume flow data unavailable. Check internet connection.")
     st.divider()
 # ── Pro Indicators Table ───────────────────────────────────────────────────────────────────────────
-st.markdown("### U0001f4c8 Pro Technical Indicators — Multi-Timeframe")
+st.markdown("### 📈 Pro Technical Indicators — Multi-Timeframe")
 left,right = st.columns(2)
 def ind_row(name,val_str,sig_label,sig_kind):
     r1,r2,r3 = st.columns([1.2,1.6,1.0])
@@ -1456,7 +1456,7 @@ with right:
     ind_row("ETF Volume Flow",etf_bias_snap.upper(),etf_bias_lbl,etf_bias_kind)
 st.divider()
 # ── Multi-Timeframe Confluence Table ───────────────────────────────────────────────────────────
-st.markdown("### U0001f500 Multi-Timeframe Confluence Table")
+st.markdown("### 🔀 Multi-Timeframe Confluence Table")
 def tf_signal(rsi,stochrsi_k,wr,macd,macd_sig,adx,pdi,mdi):
     bulls=0; bears=0
     if rsi and rsi<50: bulls+=1
@@ -1505,15 +1505,15 @@ st.divider()
 # ── Key Levels + Ichimoku ──────────────────────────────────────────────────────────────────────
 left2,right2 = st.columns(2)
 with left2:
-    st.markdown("### U0001f511 Key Price Levels")
+    st.markdown("### 🔑 Key Price Levels")
     fib=snap["fibs"]
-    st.markdown("**U0001f534 Resistance**")
+    st.markdown("**🔴 Resistance**")
     if snap["d_res"]:
         res_badges = ' '.join(['<span class="level-badge res-badge">$'+str(v)+'</span>' for v in snap["d_res"]])
         st.markdown(res_badges, unsafe_allow_html=True)
     else:
         st.caption("No daily resistance above price")
-    st.markdown("**U0001f7e2 Support**")
+    st.markdown("**🟢 Support**")
     if snap["d_sup"]:
         sup_badges = ' '.join(['<span class="level-badge sup-badge">$'+str(v)+'</span>' for v in snap["d_sup"]])
         st.markdown(sup_badges, unsafe_allow_html=True)
@@ -1528,7 +1528,7 @@ with left2:
         a.caption(label_)
         b.markdown(badge(val,"fib"), unsafe_allow_html=True)
 with right2:
-    st.markdown("### U0001f310 Ichimoku Cloud Levels")
+    st.markdown("### 🌐 Ichimoku Cloud Levels")
     st.markdown("**Tenkan-sen (9)**")
     st.markdown(badge(snap.get("d_ichi_tenkan") or "—","fib"), unsafe_allow_html=True)
     st.markdown("**Kijun-sen (26)**")
@@ -1542,7 +1542,7 @@ with right2:
     st.markdown(badge(snap.get("d_supertrend") or "—",st_badge_kind), unsafe_allow_html=True)
 st.divider()
 # ── Live Data Monitoring ────────────────────────────────────────────────────────────────────
-st.markdown("### U0001f7e2 Live Data Monitoring System")
+st.markdown("### 🟢 Live Data Monitoring System")
 st.caption("Real-time 5-min tick · Smart Alerts · Session Stats · Volume Analysis · Momentum Gauges")
 live = fetch_live_price()
 if not live:
@@ -1578,9 +1578,9 @@ else:
     with col_alerts:
         st.markdown("#### ⚡ Alerts")
         alerts = check_alerts(live,snap)
-        dot_map={"red":"U0001f534","green":"U0001f7e2","yellow":"U0001f7e1"}
+        dot_map={"red":"🔴","green":"🟢","yellow":"🟡"}
         for al in alerts:
-            dot=dot_map.get(al["level"],"U0001f7e1")
+            dot=dot_map.get(al["level"],"🟡")
             st.markdown(dot+" "+al["msg"])
     with col_gauge:
         st.markdown("#### **Momentum Gauges**")
@@ -1682,7 +1682,7 @@ pc.markdown(
     f'<div style="font-size:1.4rem;font-weight:700;color:#f0f6fc">{bulls_count}/5 Bullish</div>'
     f'<div style="font-size:0.85rem;color:#8b949e">models above current price</div></div>',
     unsafe_allow_html=True)
-pf_tab1, pf_tab2, pf_tab3 = st.tabs(['U0001f4c8 Candlestick + Forecast', 'U0001f500 All Models Comparison', 'U0001f4ca Technical Oscillators'])
+pf_tab1, pf_tab2, pf_tab3 = st.tabs(['📈 Candlestick + Forecast', '🔀 All Models Comparison', '📊 Technical Oscillators'])
 
 with pf_tab1:
     df_tail = snap['daily_df'].tail(60).copy()
@@ -1771,7 +1771,7 @@ with pf_tab3:
     fig_osc.update_yaxes(gridcolor='#1c2128')
     st.plotly_chart(fig_osc, use_container_width=True)
 # Day-by-Day Forecast Table
-st.markdown('### U0001f5d3️ Day-by-Day Price Forecast')
+st.markdown('### 🗓️ Day-by-Day Price Forecast')
 pred_df = pd.DataFrame({
     'Date': future_dates.strftime('%a %b %d, %Y'),
     'Linear ($)': [f'${v:.2f}' for v in lin_pred],
@@ -1787,7 +1787,7 @@ pred_df = pd.DataFrame({
 st.dataframe(pred_df.set_index('Date'), use_container_width=True)
 
 # Forecast Signal Dashboard
-st.markdown('### U0001f3af Forecast Signal Dashboard')
+st.markdown('### 🎯 Forecast Signal Dashboard')
 rsi_now=snap.get('d_rsi') or 50
 macd_now=snap.get('d_macd') or 0; sig_now=snap.get('d_macd_sig') or 0
 ma5_val=snap['daily_df']['EMA20'].iloc[-1] if 'EMA20' in snap['daily_df'].columns else current
@@ -1803,24 +1803,24 @@ def signal_card(col, title, signal, value):
 
 fs1,fs2,fs3,fs4,fs5 = st.columns(5)
 signal_card(fs1,'RSI Signal',
-    'Oversold — Bullish U0001f7e2' if rsi_now<35 else ('Overbought — Bearish U0001f534' if rsi_now>65 else 'Neutral ⚪'),
+    'Oversold — Bullish 🟢' if rsi_now<35 else ('Overbought — Bearish 🔴' if rsi_now>65 else 'Neutral ⚪'),
     f'RSI: {rsi_now:.1f}')
 signal_card(fs2,'MACD Cross',
-    'Bullish Cross U0001f7e2' if macd_now>sig_now else 'Bearish Cross U0001f534',
+    'Bullish Cross 🟢' if macd_now>sig_now else 'Bearish Cross 🔴',
     f'MACD {macd_now:.3f}')
 signal_card(fs3,'EMA Trend',
-    'Uptrend U0001f7e2' if current>ma5_val>ma50_val else ('Downtrend U0001f534' if current<ma5_val<ma50_val else 'Mixed ⚪'),
+    'Uptrend 🟢' if current>ma5_val>ma50_val else ('Downtrend 🔴' if current<ma5_val<ma50_val else 'Mixed ⚪'),
     f'EMA20 ${ma5_val:.2f}')
 signal_card(fs4,'BB Position',
-    'Near Upper U0001f534' if current>(snap.get('d_bb_up') or current)*0.98 else
-    ('Near Lower U0001f7e2' if current<(snap.get('d_bb_lo') or current)*1.02 else 'Mid Band ⚪'),
+    'Near Upper 🔴' if current>(snap.get('d_bb_up') or current)*0.98 else
+    ('Near Lower 🟢' if current<(snap.get('d_bb_lo') or current)*1.02 else 'Mid Band ⚪'),
     f'Mid ${snap.get("d_bb_mid") or 0:.2f}')
 signal_card(fs5,'Forecast Bias',
-    'U0001f4c8 Bullish' if ensemble[-1]>current else 'U0001f4c9 Bearish',
+    '📈 Bullish' if ensemble[-1]>current else '📉 Bearish',
     f'Target ${ensemble[-1]:.2f}')
 st.divider()
 # Correlation with Related Assets
-st.markdown('### U0001f4e1 Silver Correlation with Related Assets')
+st.markdown('### 📡 Silver Correlation with Related Assets')
 with st.spinner('Fetching correlation data…'):
     try:
         corr_data = get_correlation_data('1y')
@@ -1844,7 +1844,7 @@ with st.spinner('Fetching correlation data…'):
     except Exception: st.caption('Correlation data unavailable')
 
 # Returns Distribution & Risk Metrics
-st.markdown('### U0001f4ca Returns Analysis & Risk Metrics')
+st.markdown('### 📊 Returns Analysis & Risk Metrics')
 col_a,col_b = st.columns(2)
 with col_a:
     ret_series = snap['daily_df']['Close'].pct_change().dropna()*100
@@ -1869,10 +1869,10 @@ with col_b:
     st.dataframe(risk_df.set_index('Metric'), use_container_width=True, height=230)
 st.divider()
 # AI Analysis Section
-st.markdown('### U0001f916 AI Trade Analysis & Targets')
+st.markdown('### 🤖 AI Trade Analysis & Targets')
 st.caption('Powered by Claude '+AI_MODEL+' · All pro indicators included · Gold/Silver Ratio · DXY · ETF Flow · Cached 5 min')
 if not api_key:
-    st.info('U0001f448 Enter your Anthropic API key in the sidebar to unlock AI trade analysis.')
+    st.info('👈 Enter your Anthropic API key in the sidebar to unlock AI trade analysis.')
     st.markdown('<div class="analysis-box"><b>What AI Analysis Provides:</b>\n\n'
                 '• MARKET BIAS with conviction level\n'
                 '• BUY SETUP — Entry zone, targets (T1/T2/T3), stop loss, risk:reward\n'
