@@ -113,6 +113,7 @@ h1,h2,h3,h4 { color: #f0f6fc; }
 TICKER = "SI=F"
 GOLD_TICKER = "GC=F"
 DXY_TICKER = "DX-Y.NYB"
+YIELD_10Y_TICKER = "^TNX"
 AI_MODEL = "claude-opus-4-5"
 AI_MODEL_FAST = "claude-haiku-4-5"
 YF_BASE = "https://query1.finance.yahoo.com/v8/finance/chart"
@@ -364,7 +365,7 @@ def fibonacci(df):
 # ── Gold/Silver Ratio & DXY ──────────────────────────────────────────
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_gs_ratio_and_dxy():
-    result = {"gold_price": None, "dxy": None, "gs_ratio": None,
+    result = {"gold_price": None, "dxy": None, "yield_10y": None, "gs_ratio": None,
               "gold_daily": None, "dxy_daily": None}
     try:
         gold_df = _yf_fetch(GOLD_TICKER, "1d", "6mo")
@@ -376,6 +377,11 @@ def fetch_gs_ratio_and_dxy():
         dxy_df = _yf_fetch(DXY_TICKER, "1d", "6mo")
         result["dxy"] = float(dxy_df["Close"].iloc[-1])
         result["dxy_daily"] = dxy_df
+    except Exception:
+        pass
+    try:
+        yield_df = _yf_fetch(YIELD_10Y_TICKER, "1d", "6mo")
+        result["yield_10y"] = round(float(yield_df["Close"].iloc[-1]), 3)
     except Exception:
         pass
     return result
@@ -612,6 +618,7 @@ def load_snapshot():
         d_sup=d_sup, d_res=d_res, h_sup=h_sup, h_res=h_res, fibs=fibs,
         daily_df=daily, hourly_df=hourly,
         gold_price=gs_data.get("gold_price"), dxy=gs_data.get("dxy"),
+        yield_10y=gs_data.get("yield_10y"),
         gs_ratio=gs_ratio, gold_daily=gs_data.get("gold_daily"),
         dxy_daily=gs_data.get("dxy_daily"),
         etf_flow_bias=etf_bias,
@@ -981,7 +988,7 @@ def tradingview_ticker_tape():
     symbols=[{"proName":"TVC:SILVER","title":"Silver Futures"},
              {"proName":"OANDA:XAGUSD","title":"XAG/USD"},
              {"proName":"TVC:GOLD","title":"Gold"},
-             {"proName":"TVC:DXY","title":"DXY"},
+             {"proName":"CAPITALCOM:DXY","title":"DXY"},
              {"proName":"TVC:US10Y","title":"10Y Yield"}]
     config=json.dumps({"symbols":symbols,"showSymbolLogo":True,
                        "isTransparent":True,"displayMode":"adaptive","colorTheme":"dark","locale":"en"})
@@ -993,7 +1000,7 @@ src="https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js" 
 </script></div>"""
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_ai_analysis(price_key, api_key, gs_ratio=None, dxy=None, sentiment_score=None, etf_bias=None):
+def get_ai_analysis(price_key, api_key, gs_ratio=None, dxy=None, yield_10y=None, sentiment_score=None, etf_bias=None):
     snap = load_snapshot()
     fib = snap["fibs"]
     extra_context = ""
@@ -1001,6 +1008,8 @@ def get_ai_analysis(price_key, api_key, gs_ratio=None, dxy=None, sentiment_score
         extra_context += f"\nGold/Silver Ratio: {gs_ratio:.1f} ({'Silver historically CHEAP - contrarian BUY signal' if gs_ratio>80 else 'Normal range'})"
     if dxy:
         extra_context += f"\nDXY (USD Index): {dxy:.2f} (Silver has inverse correlation with USD)"
+    if yield_10y:
+        extra_context += f"\n10-Year Treasury Yield: {yield_10y:.3f}% (Higher rates = headwind for silver)"
     if sentiment_score is not None:
         sent_label = "Bullish" if sentiment_score > 0.2 else ("Bearish" if sentiment_score < -0.2 else "Neutral")
         extra_context += f"\nNews Sentiment Score: {sentiment_score:.2f} ({sent_label})"
@@ -1147,6 +1156,7 @@ c1,c2,c3,c4,c5,c6 = st.columns(6)
 gs_ratio = snap.get("gs_ratio")
 gold_price = snap.get("gold_price")
 dxy_val = snap.get("dxy")
+yield_10y_val = snap.get("yield_10y")
 
 cards = [
     ("💰 SILVER / OZ","$"+str(p), arrow+" "+str(abs(chg))+"%", chg_color),
@@ -1155,8 +1165,8 @@ cards = [
     ("📆 Month Range",str(snap["month_low"]),"↑ "+str(snap["month_high"]),"neut"),
     ("🥇 Gold Price","$"+str(round(gold_price,2)) if gold_price else "—",
      "G/S Ratio: "+str(gs_ratio) if gs_ratio else "Loading…","neut"),
-    ("💵 DXY (USD)","$"+str(round(dxy_val,2)) if dxy_val else "—",
-     "Inverse corr w/ Silver","neut"),
+    ("💵 DXY / 10Y Yield","DXY "+str(round(dxy_val,2)) if dxy_val else "DXY —",
+     ("10Y: "+str(round(yield_10y_val,3))+"%") if yield_10y_val else "10Y: —","neut"),
 ]
 for col,(label,val,sub,sc) in zip([c1,c2,c3,c4,c5,c6],cards):
     col.markdown(metric_card(label,val,sub,sc), unsafe_allow_html=True)
@@ -1890,6 +1900,7 @@ else:
             analysis = get_ai_analysis(snap['price'], api_key,
                 gs_ratio=snap.get('gs_ratio'),
                 dxy=snap.get('dxy'),
+                yield_10y=snap.get('yield_10y'),
                 sentiment_score=sent_score_for_ai,
                 etf_bias=etf_bias_for_ai)
             st.markdown('<div class="analysis-box">'+analysis+'</div>', unsafe_allow_html=True)
