@@ -1922,8 +1922,6 @@ st.markdown(
     'Forecasting: Linear · Polynomial · MA · Exp Smoothing · Momentum Ensemble · '
     '⚠️ Educational use only — not financial advice.</div>',
     unsafe_allow_html=True)
-
-if auto_refresh:
+ auto_refresh:
     time.sleep(300)
     st.rerun()
-"""
