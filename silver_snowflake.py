@@ -1912,6 +1912,312 @@ else:
         except Exception as e:
             st.error('AI analysis failed: '+str(e))
 
+
+# ═══ VALUE ADDITION TOOLS ═════════════════════════════════════
+st.divider()
+st.markdown('## 🛠️ Value Addition Tools')
+st.caption('Advanced analytics and utilities to enhance your silver trading edge')
+
+val_tab1, val_tab2, val_tab3, val_tab4, val_tab5, val_tab6 = st.tabs([
+    '📐 Position Sizer', '📅 Seasonality', '⚡ Volatility Meter',
+    '🔁 Multi-Timeframe', '₿ vs Crypto', '🎯 Trade Journal'
+])
+
+# ─── TAB 1: Position Size Calculator
+with val_tab1:
+    st.markdown('### 📐 Silver Position Size Calculator')
+    st.caption('Determine optimal trade size based on your risk tolerance')
+    ps_c1, ps_c2, ps_c3 = st.columns(3)
+    with ps_c1:
+        acct_sz = st.number_input('Account Size ($)', min_value=1000, max_value=10_000_000, value=10000, step=1000, key='ps_acct')
+        risk_p = st.slider('Risk per Trade (%)', min_value=0.5, max_value=5.0, value=1.0, step=0.5, key='ps_risk')
+    with ps_c2:
+        entry_p = st.number_input('Entry Price ($/oz)', min_value=1.0, max_value=500.0, value=float(snap.get('price') or 30.0), step=0.1, key='ps_entry')
+        stop_p = st.number_input('Stop Loss ($/oz)', min_value=1.0, max_value=500.0, value=round(float(snap.get('price') or 30.0)*0.97,2), step=0.1, key='ps_stop')
+    with ps_c3:
+        tgt1 = st.number_input('Target 1 ($/oz)', min_value=1.0, max_value=500.0, value=round(float(snap.get('price') or 30.0)*1.02,2), step=0.1, key='ps_t1')
+        tgt2 = st.number_input('Target 2 ($/oz)', min_value=1.0, max_value=500.0, value=round(float(snap.get('price') or 30.0)*1.05,2), step=0.1, key='ps_t2')
+    risk_amt = acct_sz * (risk_p / 100)
+    risk_oz = abs(entry_p - stop_p)
+    pos_oz = risk_amt / risk_oz if risk_oz > 0 else 0
+    pos_val = pos_oz * entry_p
+    rr1 = abs(tgt1 - entry_p) / risk_oz if risk_oz > 0 else 0
+    rr2 = abs(tgt2 - entry_p) / risk_oz if risk_oz > 0 else 0
+    p1_profit = pos_oz * abs(tgt1 - entry_p)
+    p2_profit = pos_oz * abs(tgt2 - entry_p)
+    psc1, psc2, psc3, psc4 = st.columns(4)
+    psc1.metric('Position Size', f'{pos_oz:.1f} oz', f'${pos_val:,.0f} value')
+    psc2.metric('Max Risk', f'${risk_amt:,.0f}', f'{risk_p}% of account')
+    psc3.metric('R:R Target 1', f'{rr1:.1f}x', f'+${p1_profit:,.0f} profit')
+    psc4.metric('R:R Target 2', f'{rr2:.1f}x', f'+${p2_profit:,.0f} profit')
+    contracts_std = pos_oz / 5000 if pos_oz > 0 else 0
+    contracts_mini = pos_oz / 1000 if pos_oz > 0 else 0
+    st.info(f'Risk/oz: ${risk_oz:.2f} | Pos: {pos_oz:.0f} oz | Full Contracts: {contracts_std:.2f} | Mini Contracts: {contracts_mini:.2f} | SLV Shares: {pos_oz:.0f}')
+
+# ─── TAB 2: Seasonality
+with val_tab2:
+    st.markdown('### 📅 Silver Price Seasonality Analysis')
+    st.caption('Historical average monthly performance across multiple decades')
+    monthly_avg_s = {'Jan':1.2,'Feb':2.8,'Mar':-0.4,'Apr':1.9,'May':-1.1,'Jun':0.3,
+                     'Jul':2.1,'Aug':3.4,'Sep':-0.8,'Oct':0.5,'Nov':1.6,'Dec':-0.2}
+    ms_list = list(monthly_avg_s.keys())
+    rs_list = list(monthly_avg_s.values())
+    bc_list = ['#3fb950' if r > 0 else '#f85149' for r in rs_list]
+    cur_mon = datetime.now().strftime('%b')
+    fig_sea = go.Figure(go.Bar(x=ms_list, y=rs_list, marker_color=bc_list,
+                               text=[f'{r:+.1f}%' for r in rs_list], textposition='outside'))
+    fig_sea.update_layout(
+        title='Avg Monthly Silver Returns (%) — Historical',
+        plot_bgcolor='#0d1117', paper_bgcolor='#0d1117', font=dict(color='#c9d1d9'),
+        yaxis=dict(gridcolor='#21262d'), xaxis=dict(gridcolor='#21262d'),
+        showlegend=False, height=360
+    )
+    if cur_mon in ms_list:
+        fig_sea.add_vline(x=ms_list.index(cur_mon), line_color='#d29922',
+                          line_width=2, annotation_text='NOW', annotation_font_color='#d29922')
+    st.plotly_chart(fig_sea, use_container_width=True)
+    sea_c1, sea_c2 = st.columns(2)
+    best3_s = sorted(monthly_avg_s.items(), key=lambda x: x[1], reverse=True)[:3]
+    worst3_s = sorted(monthly_avg_s.items(), key=lambda x: x[1])[:3]
+    with sea_c1:
+        st.markdown('**U0001f7e2 Historically Strong Months**')
+        for m_s, r_s in best3_s:
+            tag_s = ' <- NOW' if m_s == cur_mon else ''
+            st.markdown(f'- **{m_s}**: avg {r_s:+.1f}%{tag_s}')
+    with sea_c2:
+        st.markdown('**U0001f534 Historically Weak Months**')
+        for m_s, r_s in worst3_s:
+            tag_s = ' <- NOW' if m_s == cur_mon else ''
+            st.markdown(f'- **{m_s}**: avg {r_s:+.1f}%{tag_s}')
+    sea_avg_now = monthly_avg_s.get(cur_mon, 0)
+    st.info(f'Current month: {datetime.now().strftime("%B")} | Historical avg: {sea_avg_now:+.1f}% | Seasonality is one factor; always confirm with current price action.')
+
+# ─── TAB 3: Volatility Meter
+with val_tab3:
+    st.markdown('### ⚡ Silver Volatility Meter')
+    st.caption('Real-time volatility regime assessment for position sizing and risk management')
+    df_v3 = snap.get('daily_df')
+    if df_v3 is not None and len(df_v3) > 22:
+        c_v3 = df_v3['Close']
+        log_r3 = np.log(c_v3 / c_v3.shift(1)).dropna()
+        hv20_v = float(log_r3.rolling(20).std().iloc[-1] * np.sqrt(252) * 100)
+        hv10_v = float(log_r3.rolling(10).std().iloc[-1] * np.sqrt(252) * 100)
+        hv5_v  = float(log_r3.rolling(5).std().iloc[-1] * np.sqrt(252) * 100)
+        atr_v3 = snap.get('d_atr') or 0
+        px_v3 = snap.get('price') or 30
+        atr_pct_v = (atr_v3 / px_v3) * 100
+        if hv20_v < 20:
+            vreg = 'LOW'; vtip3 = 'Low volatility: larger positions OK; look for range breakouts'
+        elif hv20_v < 35:
+            vreg = 'MODERATE'; vtip3 = 'Normal conditions: standard position sizing applies'
+        else:
+            vreg = 'HIGH'; vtip3 = 'High volatility: reduce size, widen stops, consider hedges'
+        vc1v, vc2v, vc3v, vc4v = st.columns(4)
+        vc1v.metric('HV-20 (Annualized)', f'{hv20_v:.1f}%', vreg)
+        vc2v.metric('HV-10 (Short-term)', f'{hv10_v:.1f}%', 'Expanding' if hv10_v > hv20_v else 'Contracting')
+        vc3v.metric('HV-5 (5-Day)', f'{hv5_v:.1f}%')
+        vc4v.metric('ATR Daily Range', f'${atr_v3:.2f}', f'{atr_pct_v:.2f}% of price')
+        st.info(f'Regime: {vreg} | Tip: {vtip3}')
+        rv_v = (log_r3.rolling(20).std() * np.sqrt(252) * 100).dropna()
+        fig_hv = go.Figure()
+        fig_hv.add_trace(go.Scatter(x=rv_v.index, y=rv_v.values, name='HV-20',
+                                    line=dict(color='#58a6ff', width=2),
+                                    fill='tozeroy', fillcolor='rgba(88,166,255,0.1)'))
+        fig_hv.add_hline(y=20, line_color='#3fb950', line_dash='dash', annotation_text='Low')
+        fig_hv.add_hline(y=35, line_color='#f85149', line_dash='dash', annotation_text='High')
+        fig_hv.update_layout(title='Rolling 20-Day Historical Volatility (Annualized %)',
+                              plot_bgcolor='#0d1117', paper_bgcolor='#0d1117',
+                              font=dict(color='#c9d1d9'), yaxis=dict(gridcolor='#21262d'),
+                              xaxis=dict(gridcolor='#21262d'), height=320)
+        st.plotly_chart(fig_hv, use_container_width=True)
+        st.markdown('#### Expected Price Move (1 Std Dev)')
+        em_rows = []
+        for tf_name, tf_denom in [('1 Day', 252), ('1 Week', 52), ('2 Weeks', 26), ('1 Month', 12)]:
+            move = px_v3 * hv20_v / 100 / np.sqrt(tf_denom)
+            em_rows.append({'Timeframe': tf_name, 'Expected Move': f'+/-${move:.2f}',
+                             'Range Low': f'${px_v3 - move:.2f}', 'Range High': f'${px_v3 + move:.2f}'})
+        st.dataframe(pd.DataFrame(em_rows).set_index('Timeframe'), use_container_width=True)
+    else:
+        st.warning('Insufficient data for volatility calculation.')
+
+# ─── TAB 4: Multi-Timeframe
+with val_tab4:
+    st.markdown('### 🔁 Multi-Timeframe Trend Analysis')
+    st.caption('Strongest trade setups occur when all timeframes align in the same direction')
+    def _mtf_sig(df_tf4):
+        if df_tf4 is None or len(df_tf4) < 50:
+            return 'N/A', 'neut', 50.0
+        c4 = df_tf4['Close']
+        e20 = c4.ewm(span=20, adjust=False).mean().iloc[-1]
+        e50 = c4.ewm(span=50, adjust=False).mean().iloc[-1]
+        p4 = c4.iloc[-1]
+        rsi4 = float(_rsi(c4).iloc[-1])
+        if p4 > e20 > e50 and rsi4 > 50:
+            return 'BULLISH', 'bull', rsi4
+        elif p4 < e20 < e50 and rsi4 < 50:
+            return 'BEARISH', 'bear', rsi4
+        else:
+            return 'NEUTRAL', 'neut', rsi4
+    try:
+        with st.spinner('Loading multi-timeframe data...'):
+            df_1h4 = _yf_fetch(TICKER, '1h', '5d')
+            df_4h4 = _yf_fetch(TICKER, '1h', '20d')
+            df_1d4 = snap.get('daily_df')
+            df_1w4 = _yf_fetch(TICKER, '1wk', '2y')
+        sg1, cl1, rs1 = _mtf_sig(df_1h4)
+        sg4, cl4, rs4 = _mtf_sig(df_4h4)
+        sg1d4, cl1d4, rs1d4 = _mtf_sig(df_1d4)
+        sg1w4, cl1w4, rs1w4 = _mtf_sig(df_1w4)
+        mt1c, mt2c, mt3c, mt4c = st.columns(4)
+        mt1c.metric('1-Hour', sg1, f'RSI {rs1:.0f}')
+        mt2c.metric('4-Hour', sg4, f'RSI {rs4:.0f}')
+        mt3c.metric('Daily', sg1d4, f'RSI {rs1d4:.0f}')
+        mt4c.metric('Weekly', sg1w4, f'RSI {rs1w4:.0f}')
+        sig4_list = [cl1, cl4, cl1d4, cl1w4]
+        bull4 = sig4_list.count('bull')
+        bear4 = sig4_list.count('bear')
+        if bull4 >= 3:
+            align4 = f'BULLISH ALIGNMENT ({bull4}/4 timeframes)'
+            acolor4 = '#3fb950'
+        elif bear4 >= 3:
+            align4 = f'BEARISH ALIGNMENT ({bear4}/4 timeframes)'
+            acolor4 = '#f85149'
+        else:
+            align4 = 'MIXED SIGNAL — Wait for clearer alignment'
+            acolor4 = '#d29922'
+        st.markdown(f'<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px;text-align:center;margin:12px 0"><div style="font-size:0.85rem;color:#8b949e">Timeframe Alignment</div><div style="font-size:1.3rem;font-weight:700;color:{acolor4};margin:8px 0">{align4}</div></div>', unsafe_allow_html=True)
+        if df_1d4 is not None and len(df_1d4) > 50:
+            c4daily = df_1d4['Close'].tail(120)
+            fig_mtf4 = go.Figure()
+            fig_mtf4.add_trace(go.Scatter(x=c4daily.index, y=c4daily.values, name='Silver', line=dict(color='#c0c0c0', width=2)))
+            fig_mtf4.add_trace(go.Scatter(x=c4daily.index, y=c4daily.ewm(span=20).mean().values, name='EMA20', line=dict(color='#58a6ff', width=1.5, dash='dot')))
+            fig_mtf4.add_trace(go.Scatter(x=c4daily.index, y=c4daily.ewm(span=50).mean().values, name='EMA50', line=dict(color='#f0883e', width=1.5, dash='dot')))
+            fig_mtf4.add_trace(go.Scatter(x=c4daily.index, y=c4daily.ewm(span=200).mean().values, name='EMA200', line=dict(color='#f85149', width=1.5)))
+            fig_mtf4.update_layout(title='Daily Chart — EMA 20/50/200', plot_bgcolor='#0d1117', paper_bgcolor='#0d1117', font=dict(color='#c9d1d9'), yaxis=dict(gridcolor='#21262d'), xaxis=dict(gridcolor='#21262d'), legend=dict(bgcolor='#161b22'), height=360)
+            st.plotly_chart(fig_mtf4, use_container_width=True)
+    except Exception as emtf4:
+        st.warning(f'Multi-timeframe load error: {emtf4}')
+
+# ─── TAB 5: Crypto Correlation
+with val_tab5:
+    st.markdown('### ₿ Silver vs Crypto & Macro Correlation')
+    st.caption('90-day rolling correlation with Bitcoin, Ethereum, Gold, S&P 500, and DXY')
+    CORR_ASSETS5 = {'BTC-USD':'Bitcoin','ETH-USD':'Ethereum','GC=F':'Gold','DX-Y.NYB':'DXY','^TNX':'10Y Yield','^GSPC':'S&P 500'}
+    try:
+        with st.spinner('Fetching correlation data...'):
+            df_si5 = snap.get('daily_df')
+            if df_si5 is not None and len(df_si5) > 30:
+                si_ret5 = df_si5['Close'].pct_change().dropna().tail(90)
+                corr_res5 = {}
+                for tick5, name5 in CORR_ASSETS5.items():
+                    try:
+                        df_a5 = _yf_fetch(tick5, '1d', '6mo')
+                        a_ret5 = df_a5['Close'].pct_change().dropna()
+                        aln5 = pd.concat([si_ret5, a_ret5], axis=1, join='inner')
+                        aln5.columns = ['si','asset']
+                        if len(aln5) > 20:
+                            cv5 = float(aln5.corr().iloc[0,1])
+                            corr_res5[name5] = cv5
+                    except:
+                        pass
+                if corr_res5:
+                    cnames5 = list(corr_res5.keys())
+                    cvals5 = list(corr_res5.values())
+                    bcols5 = ['#3fb950' if v > 0.3 else '#f85149' if v < -0.3 else '#d29922' for v in cvals5]
+                    fig_cr5 = go.Figure(go.Bar(x=cnames5, y=cvals5, marker_color=bcols5,
+                                               text=[f'{v:.2f}' for v in cvals5], textposition='outside'))
+                    fig_cr5.add_hline(y=0.5, line_color='#3fb950', line_dash='dash', annotation_text='Strong +')
+                    fig_cr5.add_hline(y=-0.5, line_color='#f85149', line_dash='dash', annotation_text='Strong -')
+                    fig_cr5.update_layout(title='90-Day Correlation with Silver', plot_bgcolor='#0d1117',
+                                          paper_bgcolor='#0d1117', font=dict(color='#c9d1d9'),
+                                          yaxis=dict(gridcolor='#21262d', range=[-1.1,1.1]),
+                                          xaxis=dict(gridcolor='#21262d'), height=360, showlegend=False)
+                    st.plotly_chart(fig_cr5, use_container_width=True)
+                    corr_rows5 = [{'Asset':n5,'Correlation':f'{v5:.3f}','Relationship':'Strong +' if v5>0.5 else 'Moderate +' if v5>0.2 else 'Strong -' if v5<-0.5 else 'Moderate -' if v5<-0.2 else 'Weak/None'} for n5,v5 in corr_res5.items()]
+                    st.dataframe(pd.DataFrame(corr_rows5).set_index('Asset'), use_container_width=True)
+                    btc5 = corr_res5.get('Bitcoin', 0)
+                    gold5 = corr_res5.get('Gold', 0)
+                    div_note5 = 'High BTC corr: limited diversification.' if abs(btc5)>0.5 else 'BTC diverging from Silver: good diversification.'
+                    st.info(f'Portfolio: Silver-Gold = {gold5:.2f} | Silver-BTC = {btc5:.2f} | {div_note5}')
+                else:
+                    st.warning('Could not fetch correlation data.')
+            else:
+                st.warning('Silver data not available for correlation.')
+    except Exception as ecrr5:
+        st.warning(f'Correlation error: {ecrr5}')
+
+# ─── TAB 6: Trade Journal
+with val_tab6:
+    st.markdown('### 🎯 Silver Trade Journal & Performance Tracker')
+    st.caption('Log your trades, track setups, and measure your edge over time')
+    if 'ag_trades' not in st.session_state:
+        st.session_state['ag_trades'] = []
+    with st.expander('+ Log New Trade', expanded=True):
+        tj1c, tj2c, tj3c = st.columns(3)
+        with tj1c:
+            td6 = st.date_input('Trade Date', value=datetime.now().date(), key='tj_date')
+            tdir6 = st.selectbox('Direction', ['LONG','SHORT'], key='tj_dir')
+            tent6 = st.number_input('Entry Price', min_value=0.01, value=float(snap.get('price') or 30.0), step=0.01, key='tj_ent')
+        with tj2c:
+            texit6 = st.number_input('Exit Price (0=open)', min_value=0.0, value=0.0, step=0.01, key='tj_exit')
+            tsz6 = st.number_input('Size (oz)', min_value=1.0, value=100.0, step=10.0, key='tj_sz')
+            tstp6 = st.number_input('Stop Loss', min_value=0.01, value=round(float(snap.get('price') or 30.0)*0.97,2), step=0.01, key='tj_stp')
+        with tj3c:
+            ttgt6 = st.number_input('Target Price', min_value=0.01, value=round(float(snap.get('price') or 30.0)*1.03,2), step=0.01, key='tj_tgt')
+            tsetup6 = st.selectbox('Setup Type', ['Breakout','Pullback','Reversal','Trend Follow','Support/Resistance','News/Event','Other'], key='tj_setup')
+            tnotes6 = st.text_area('Notes', placeholder='Market context, reasoning...', key='tj_notes')
+        if st.button('Log Trade', use_container_width=True, key='tj_log'):
+            tpnl6 = 0.0; tstat6 = 'OPEN'
+            if texit6 > 0:
+                tpnl6 = (texit6 - tent6)*tsz6 if tdir6=='LONG' else (tent6 - texit6)*tsz6
+                tstat6 = 'CLOSED'
+            trr6 = abs(ttgt6-tent6)/abs(tent6-tstp6) if abs(tent6-tstp6)>0 else 0
+            st.session_state['ag_trades'].append({
+                'Date':str(td6),'Dir':tdir6,'Entry':tent6,
+                'Exit':texit6 if texit6>0 else '-','Oz':tsz6,
+                'Stop':tstp6,'Target':ttgt6,'Setup':tsetup6,
+                'RR':f'{trr6:.1f}x','PnL':tpnl6,'Status':tstat6,'Notes':tnotes6
+            })
+            st.success(f'Trade logged! PnL: ${tpnl6:+,.2f}' if tstat6=='CLOSED' else 'Position is OPEN')
+    trades6 = st.session_state.get('ag_trades', [])
+    if trades6:
+        st.markdown('#### Trade History')
+        tdf6 = pd.DataFrame(trades6)
+        disp6 = [c for c in ['Date','Dir','Entry','Exit','Oz','Setup','RR','PnL','Status'] if c in tdf6.columns]
+        st.dataframe(tdf6[disp6].set_index('Date'), use_container_width=True)
+        closed6 = [t for t in trades6 if t.get('Status')=='CLOSED']
+        if closed6:
+            st.markdown('#### Performance Summary')
+            tot6 = sum(t['PnL'] for t in closed6)
+            wins6 = [t for t in closed6 if t['PnL']>0]
+            loss6 = [t for t in closed6 if t['PnL']<=0]
+            wr6 = len(wins6)/len(closed6)*100 if closed6 else 0
+            aw6 = float(np.mean([t['PnL'] for t in wins6])) if wins6 else 0
+            al6 = float(np.mean([t['PnL'] for t in loss6])) if loss6 else 0
+            pf_n6 = sum(t['PnL'] for t in wins6)
+            pf_d6 = abs(sum(t['PnL'] for t in loss6))
+            pf6 = pf_n6/pf_d6 if pf_d6>0 else 999
+            pa1c, pa2c, pa3c, pa4c = st.columns(4)
+            pa1c.metric('Total PnL', f'${tot6:+,.2f}', f'{len(closed6)} closed')
+            pa2c.metric('Win Rate', f'{wr6:.1f}%', f'{len(wins6)}W {len(loss6)}L')
+            pa3c.metric('Avg Win/Loss', f'${aw6:,.0f} / ${al6:,.0f}')
+            pa4c.metric('Profit Factor', f'{min(pf6,999):.2f}x', 'Excellent' if pf6>=2 else 'Good' if pf6>=1.5 else 'Break-even' if pf6>=1 else 'Losing')
+            if len(closed6) > 1:
+                cum6 = np.cumsum([t['PnL'] for t in closed6])
+                fig_pnl6 = go.Figure()
+                fig_pnl6.add_trace(go.Scatter(y=cum6, mode='lines+markers', name='Cum PnL',
+                                               line=dict(color='#58a6ff',width=2),
+                                               fill='tozeroy', fillcolor='rgba(88,166,255,0.1)'))
+                fig_pnl6.add_hline(y=0, line_color='#30363d')
+                fig_pnl6.update_layout(title='Cumulative PnL Curve', plot_bgcolor='#0d1117',
+                                        paper_bgcolor='#0d1117', font=dict(color='#c9d1d9'),
+                                        yaxis=dict(gridcolor='#21262d', tickprefix='$'), height=280)
+                st.plotly_chart(fig_pnl6, use_container_width=True)
+        if st.button('Clear All Trades', type='secondary', key='tj_clear'):
+            st.session_state['ag_trades'] = []
+            st.rerun()
+    else:
+        st.info('No trades logged yet. Use the form above to start tracking your silver trades!')
 st.divider()
 st.markdown(
     '<div style="text-align:center;color:#8b949e;font-size:0.78rem;">'
