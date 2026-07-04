@@ -1994,11 +1994,11 @@ with val_tab1:
         acct_sz = st.number_input('Account Size ($)', min_value=1000, max_value=10_000_000, value=10000, step=1000, key='ps_acct')
         risk_p = st.slider('Risk per Trade (%)', min_value=0.5, max_value=5.0, value=1.0, step=0.5, key='ps_risk')
     with ps_c2:
-        entry_p = st.number_input('Entry Price ($/oz)', min_value=1.0, max_value=500.0, value=float(snap.get('price') or 30.0), step=0.1, key='ps_entry')
-        stop_p = st.number_input('Stop Loss ($/oz)', min_value=1.0, max_value=500.0, value=round(float(snap.get('price') or 30.0)*0.97,2), step=0.1, key='ps_stop')
+        entry_p = st.number_input('Entry Price ($/oz)', min_value=1.0, max_value=20000.0, value=float(snap.get('price') or 30.0), step=0.1, key='ps_entry')
+        stop_p = st.number_input('Stop Loss ($/oz)', min_value=1.0, max_value=20000.0, value=round(float(snap.get('price') or 30.0)*0.97,2), step=0.1, key='ps_stop')
     with ps_c3:
-        tgt1 = st.number_input('Target 1 ($/oz)', min_value=1.0, max_value=500.0, value=round(float(snap.get('price') or 30.0)*1.02,2), step=0.1, key='ps_t1')
-        tgt2 = st.number_input('Target 2 ($/oz)', min_value=1.0, max_value=500.0, value=round(float(snap.get('price') or 30.0)*1.05,2), step=0.1, key='ps_t2')
+        tgt1 = st.number_input('Target 1 ($/oz)', min_value=1.0, max_value=20000.0, value=round(float(snap.get('price') or 30.0)*1.02,2), step=0.1, key='ps_t1')
+        tgt2 = st.number_input('Target 2 ($/oz)', min_value=1.0, max_value=20000.0, value=round(float(snap.get('price') or 30.0)*1.05,2), step=0.1, key='ps_t2')
     risk_amt = acct_sz * (risk_p / 100)
     risk_oz = abs(entry_p - stop_p)
     pos_oz = risk_amt / risk_oz if risk_oz > 0 else 0
