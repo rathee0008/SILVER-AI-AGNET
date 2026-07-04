@@ -1994,11 +1994,11 @@ with val_tab1:
         acct_sz = st.number_input('Account Size ($)', min_value=1000, max_value=10_000_000, value=10000, step=1000, key='ps_acct')
         risk_p = st.slider('Risk per Trade (%)', min_value=0.5, max_value=5.0, value=1.0, step=0.5, key='ps_risk')
     with ps_c2:
-        entry_p = st.number_input('Entry Price ($/oz)', min_value=1.0, max_value=20000.0, value=float(snap.get('price') or 30.0), step=0.1, key='ps_entry')
-        stop_p = st.number_input('Stop Loss ($/oz)', min_value=1.0, max_value=20000.0, value=round(float(snap.get('price') or 30.0)*0.97,2), step=0.1, key='ps_stop')
+        entry_p = st.number_input('Entry Price ($/oz)', min_value=1.0, max_value=20000.0, value=float(snap.get('price') or (4000.0 if IS_GOLD else 30.0)), step=0.1, key='ps_entry')
+        stop_p = st.number_input('Stop Loss ($/oz)', min_value=1.0, max_value=20000.0, value=round(float(snap.get('price') or (4000.0 if IS_GOLD else 30.0))*0.97,2), step=0.1, key='ps_stop')
     with ps_c3:
-        tgt1 = st.number_input('Target 1 ($/oz)', min_value=1.0, max_value=20000.0, value=round(float(snap.get('price') or 30.0)*1.02,2), step=0.1, key='ps_t1')
-        tgt2 = st.number_input('Target 2 ($/oz)', min_value=1.0, max_value=20000.0, value=round(float(snap.get('price') or 30.0)*1.05,2), step=0.1, key='ps_t2')
+        tgt1 = st.number_input('Target 1 ($/oz)', min_value=1.0, max_value=20000.0, value=round(float(snap.get('price') or (4000.0 if IS_GOLD else 30.0))*1.02,2), step=0.1, key='ps_t1')
+        tgt2 = st.number_input('Target 2 ($/oz)', min_value=1.0, max_value=20000.0, value=round(float(snap.get('price') or (4000.0 if IS_GOLD else 30.0))*1.05,2), step=0.1, key='ps_t2')
     risk_amt = acct_sz * (risk_p / 100)
     risk_oz = abs(entry_p - stop_p)
     pos_oz = risk_amt / risk_oz if risk_oz > 0 else 0
@@ -2012,8 +2012,8 @@ with val_tab1:
     psc2.metric('Max Risk', f'${risk_amt:,.0f}', f'{risk_p}% of account')
     psc3.metric('R:R Target 1', f'{rr1:.1f}x', f'+${p1_profit:,.0f} profit')
     psc4.metric('R:R Target 2', f'{rr2:.1f}x', f'+${p2_profit:,.0f} profit')
-    contracts_std = pos_oz / 5000 if pos_oz > 0 else 0
-    contracts_mini = pos_oz / 1000 if pos_oz > 0 else 0
+    contracts_std = pos_oz / (100 if IS_GOLD else 5000) if pos_oz > 0 else 0
+    contracts_mini = pos_oz / (10 if IS_GOLD else 1000) if pos_oz > 0 else 0
     st.info(f'Risk/oz: ${risk_oz:.2f} | Pos: {pos_oz:.0f} oz | Full Contracts: {contracts_std:.2f} | Mini Contracts: {contracts_mini:.2f} | ' + ('GLD' if IS_GOLD else 'SLV') + f' Shares: {pos_oz:.0f}')
 
 # ─── TAB 2: Seasonality
@@ -2066,7 +2066,7 @@ with val_tab3:
         hv10_v = float(log_r3.rolling(10).std().iloc[-1] * np.sqrt(252) * 100)
         hv5_v  = float(log_r3.rolling(5).std().iloc[-1] * np.sqrt(252) * 100)
         atr_v3 = snap.get('d_atr') or 0
-        px_v3 = snap.get('price') or 30
+        px_v3 = snap.get('price') or (4000 if IS_GOLD else 30)
         atr_pct_v = (atr_v3 / px_v3) * 100
         if hv20_v < 20:
             vreg = 'LOW'; vtip3 = 'Low volatility: larger positions OK; look for range breakouts'
@@ -2219,13 +2219,13 @@ with val_tab6:
         with tj1c:
             td6 = st.date_input('Trade Date', value=datetime.now().date(), key='tj_date')
             tdir6 = st.selectbox('Direction', ['LONG','SHORT'], key='tj_dir')
-            tent6 = st.number_input('Entry Price', min_value=0.01, value=float(snap.get('price') or 30.0), step=0.01, key='tj_ent')
+            tent6 = st.number_input('Entry Price', min_value=0.01, value=float(snap.get('price') or (4000.0 if IS_GOLD else 30.0)), step=0.01, key='tj_ent')
         with tj2c:
             texit6 = st.number_input('Exit Price (0=open)', min_value=0.0, value=0.0, step=0.01, key='tj_exit')
             tsz6 = st.number_input('Size (oz)', min_value=1.0, value=100.0, step=10.0, key='tj_sz')
-            tstp6 = st.number_input('Stop Loss', min_value=0.01, value=round(float(snap.get('price') or 30.0)*0.97,2), step=0.01, key='tj_stp')
+            tstp6 = st.number_input('Stop Loss', min_value=0.01, value=round(float(snap.get('price') or (4000.0 if IS_GOLD else 30.0))*0.97,2), step=0.01, key='tj_stp')
         with tj3c:
-            ttgt6 = st.number_input('Target Price', min_value=0.01, value=round(float(snap.get('price') or 30.0)*1.03,2), step=0.01, key='tj_tgt')
+            ttgt6 = st.number_input('Target Price', min_value=0.01, value=round(float(snap.get('price') or (4000.0 if IS_GOLD else 30.0))*1.03,2), step=0.01, key='tj_tgt')
             tsetup6 = st.selectbox('Setup Type', ['Breakout','Pullback','Reversal','Trend Follow','Support/Resistance','News/Event','Other'], key='tj_setup')
             tnotes6 = st.text_area('Notes', placeholder='Market context, reasoning...', key='tj_notes')
         if st.button('Log Trade', use_container_width=True, key='tj_log'):
