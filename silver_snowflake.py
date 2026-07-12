@@ -529,42 +529,85 @@ def make_etf_obv_chart(etf_dfs, selected_etfs=None):
         hovermode="x unified")
     return fig
 
-# ── News Sentiment ────────────────────────────────────────────────
-@st.cache_data(ttl=600, show_spinner=False)
+# ── Pro News & Macro Intelligence ──────────────────────────────
+NEWS_FEEDS = {
+    "Silver": ["https://feeds.finance.yahoo.com/rss/2.0/headline?s=SI=F&region=US&lang=en-US",
+               "https://www.kitco.com/rss/silver.xml"],
+    "Gold": ["https://feeds.finance.yahoo.com/rss/2.0/headline?s=GC=F&region=US&lang=en-US",
+             "https://www.kitco.com/rss/gold.xml"],
+    "Macro": ["https://feeds.finance.yahoo.com/rss/2.0/headline?s=DX-Y.NYB&region=US&lang=en-US"],
+}
+BULLISH_KW = ["surge", "rally", "rise", "gain", "bull", "up", "high", "strong", "buy", "support",
+              "breakout", "safe haven", "haven demand", "accumulate", "inflow", "record high",
+              "central bank buying", "rate cut", "dovish", "weak dollar"]
+BEARISH_KW = ["fall", "drop", "decline", "bear", "low", "weak", "sell", "pressure", "breakdown",
+              "sell-off", "crash", "outflow", "hawkish", "rate hike", "strong dollar", "profit-taking"]
+MACRO_KW = ["fed", "fomc", "powell", "rate cut", "rate hike", "interest rate", "inflation", "cpi",
+            "ppi", "nonfarm", "jobs report", "treasury yield", "dxy", "dollar index",
+            "central bank", "ecb", "boj"]
+GEO_KW = ["war", "conflict", "sanction", "geopolitical", "tension", "middle east", "russia",
+          "ukraine", "china", "tariff", "opec", "election"]
+INDUSTRIAL_KW = ["solar", "electric vehicle", "industrial demand", "chip", "semiconductor",
+                 "supply deficit", "mine supply", "photovoltaic"]
+
+def _classify_headline(title):
+    t = title.lower()
+    bull = sum(1 for k in BULLISH_KW if k in t)
+    bear = sum(1 for k in BEARISH_KW if k in t)
+    sentiment = 1 if bull > bear else (-1 if bear > bull else 0)
+    if any(k in t for k in MACRO_KW):
+        category, impact = "Macro & Fed", "High"
+    elif any(k in t for k in GEO_KW):
+        category, impact = "Geopolitical", "High"
+    return sentiment, category, impact
+
+@st.cache_data(ttl=20, show_spinner=False)
 def fetch_news_sentiment():
-    headlines = []
-    feeds = [
-        "https://feeds.finance.yahoo.com/rss/2.0/headline?s=SI=F&region=US&lang=en-US",
-        "https://www.kitco.com/rss/silver.xml",
-    ]
-    for url in feeds:
-        try:
-            r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
-            if r.status_code == 200:
+    items = []
+    seen = set()
+    for group, urls in NEWS_FEEDS.items():
+        for url in urls:
+            try:
+                r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+                if r.status_code != 200:
+                    continue
                 import re
-                titles = re.findall(r'<title><![CDATA[(.*?)]]></title>', r.text)
+                titles = re.findall(r'<title><!\[CDATA\[(.*?)\]\]></title>', r.text)
                 if not titles:
                     titles = re.findall(r'<title>(.*?)</title>', r.text)
-                for t in titles[1:6]:
+                dates = re.findall(r'<pubDate>(.*?)</pubDate>', r.text)
+                links = re.findall(r'<link>(.*?)</link>', r.text)
+                for i, t in enumerate(titles[1:9]):
                     clean = re.sub(r'<[^>]+>', '', t).strip()
-                    if clean and len(clean) > 10:
-                        headlines.append(clean)
-        except Exception:
-            pass
-    bullish_kw = ["surge","rally","rise","gain","bull","up","high","strong","buy","support","breakout","gold"]
-    bearish_kw = ["fall","drop","decline","bear","low","weak","sell","pressure","breakdown","sell-off","crash"]
-    scores = []
-    for h in headlines[:8]:
-        hl = h.lower()
-        bull = sum(1 for k in bullish_kw if k in hl)
-        bear = sum(1 for k in bearish_kw if k in hl)
-        if bull > bear: scores.append(1)
-        elif bear > bull: scores.append(-1)
-        else: scores.append(0)
-    avg = sum(scores)/len(scores) if scores else 0
-    return {"headlines": headlines[:8], "sentiment_score": round(avg,2), "count": len(headlines)}
+                    key = clean.lower()[:60]
+                    if not clean or len(clean) < 10 or key in seen:
+                        continue
+                    seen.add(key)
+                    pub_dt = None
+                    if i < len(dates):
+                        try:
+                            from email.utils import parsedate_to_datetime
+                            pub_dt = parsedate_to_datetime(dates[i])
+                        except Exception:
+                            pub_dt = None
+                    link = links[i + 1] if i + 1 < len(links) else None
+                    sentiment, category, impact = _classify_headline(clean)
+                    source = url.split("/")[2].replace("www.", "").replace("feeds.", "")
+                    items.append({"title": clean, "source": source, "published": pub_dt,
+                                  "link": link, "sentiment": sentiment,
+                                  "category": category, "impact": impact})
+            except Exception:
+                continue
+    items.sort(key=lambda x: x["published"].timestamp() if x["published"] else 0, reverse=True)
+    scores = [it["sentiment"] for it in items]
+    avg = round(sum(scores) / len(scores), 2) if scores else 0
+    high_impact = sum(1 for it in items if it["impact"] == "High")
+    headlines = [it["title"] for it in items]
+    return {"items": items[:30], "headlines": headlines[:30], "sentiment_score": avg,
+            "count": len(items), "high_impact_count": high_impact,
+            "updated": datetime.utcnow()}
 
-# ── Snapshot (cached 5 min) ────────────────────────────────────────────
+# ── Snapshot (cached 5 min) ──────────────────────────────────
 @st.cache_data(ttl=300, show_spinner=False)
 def load_snapshot():
     daily = enrich(_yf_fetch(TICKER,"1d","6mo"))
@@ -1102,6 +1145,7 @@ with st.sidebar:
     show_gold_overlay = st.checkbox("Show Gold/Silver Ratio Chart", value=True)
     show_dxy_overlay = st.checkbox("Show DXY vs Silver Chart", value=True)
     show_news = st.checkbox("Show News Sentiment", value=True)
+    live_news_mode = st.checkbox("⚡ Live News Mode (20s refresh)", value=False)
     show_etf_vflow = st.checkbox("Show ETF Volume Flow", value=True)
     st.divider()
     st.markdown("**Indicators**")
@@ -1192,29 +1236,49 @@ Ratio below 55 suggests silver is expensive relative to gold.
 </div>
 </div>''', unsafe_allow_html=True)
 
-# ── News Sentiment Display ────────────────────────────────────────────────────────────────
+# ── Pro News & Macro Intelligence Display ──────────────────────────
 news_data = {}
 if show_news:
-    with st.spinner("Fetching news sentiment…"):
+    with st.spinner("Fetching gold & silver news + macro intelligence…"):
         news_data = fetch_news_sentiment()
-    if news_data.get("headlines"):
-        sent = news_data["sentiment_score"]
-        sent_color = "#3fb950" if sent > 0.2 else "#f85149" if sent < -0.2 else "#d29922"
-        sent_label = "BULLISH" if sent > 0.2 else "BEARISH" if sent < -0.2 else "NEUTRAL"
-        with st.expander(f"📰 News Sentiment: {sent_label} ({sent:+.2f}) — {news_data['count']} headlines", expanded=False):
-            st.markdown(f'<div style="margin-bottom:8px"><span style="color:{sent_color};font-weight:700;font-size:16px">{sent_label}</span>'
-                        f'<span style="color:#8b949e;font-size:12px;margin-left:8px">Sentiment Score: {sent:+.2f}</span></div>',
-                        unsafe_allow_html=True)
-            for h in news_data.get("headlines",[]):
-                h_lower = h.lower()
-                bullish_kw = ["surge","rally","rise","gain","bull","up","high","strong","buy","support","breakout"]
-                bearish_kw = ["fall","drop","decline","bear","low","weak","sell","pressure","breakdown"]
-                bull = sum(1 for k in bullish_kw if k in h_lower)
-                bear_c = sum(1 for k in bearish_kw if k in h_lower)
-                dot = "🟢" if bull > bear_c else "🔴" if bear_c > bull else "⚪"
-                st.markdown(f'<div class="news-card">{dot} {h}</div>', unsafe_allow_html=True)
-
-# ── Signal Score ───────────────────────────────────────────────────────────────────────────────
+    if news_data.get("items"):
+        sent = news_data['sentiment_score']
+        sent_color = "#3fb950" if sent > 0.15 else "#f85149" if sent < -0.15 else "#d29922"
+        sent_label = "BULLISH" if sent > 0.15 else "BEARISH" if sent < -0.15 else "NEUTRAL"
+        with st.expander(
+            f"📰 Pro News & Macro Intelligence: {sent_label} ({sent:+.2f}) — "
+            f"{news_data['count']} headlines · {news_data['high_impact_count']} high-impact",
+            expanded=False):
+            st.markdown(
+                f'<div style="margin-bottom:10px">'
+                f'<span style="color:{sent_color};font-weight:700;font-size:16px">{sent_label}</span>'
+                f'<span style="color:#8b949e;font-size:12px;margin-left:10px">'
+                f'Composite Sentiment: {sent:+.2f} · Sources: Kitco + Yahoo Finance (Gold & Silver) '
+                f'· Updated {news_data["updated"].strftime("%H:%M:%S")} UTC</span></div>',
+                unsafe_allow_html=True)
+            cats = ["All", "Silver", "Gold", "Macro & Fed", "Geopolitical", "Industrial Demand", "General"]
+            tabs = st.tabs(cats)
+            for tab, cat in zip(tabs, cats):
+                with tab:
+                    subset = news_data["items"] if cat == "All" else [
+                        it for it in news_data["items"] if it["category"] == cat]
+                    if not subset:
+                        st.caption("No headlines in this category right now.")
+                        continue
+                    for it in subset[:12]:
+                        dot = "🟢" if it["sentiment"] > 0 else "🔴" if it["sentiment"] < 0 else "⚪"
+                        impact_color = {"High": "#f85149", "Medium": "#d29922", "Low": "#8b949e"}[it["impact"]]
+                        when = it["published"].strftime("%b %d, %H:%M UTC") if it["published"] else "recent"
+                        title_html = (
+                            f'<a href="{it["link"]}" target="_blank" style="color:#e6edf3;text-decoration:none">{it["title"]}</a>'
+                            if it["link"] else it["title"])
+                        st.markdown(
+                            f'<div class="news-card">{dot} {title_html}'
+                            f'<div style="margin-top:4px;font-size:11px;color:#8b949e">'
+                            f'{it["source"]} · {when} · '
+                            f'<span style="color:{impact_color};font-weight:600">{it["impact"]} impact</span> · '
+                            f'{it["category"]}</div></div>',
+                            unsafe_allow_html=True)
 st.markdown("### 🎯 Signal Score — Composite Indicator Consensus")
 scoring = signal_score(snap)
 sc1, sc2 = st.columns([1, 2])
@@ -2230,4 +2294,12 @@ st.markdown(
     unsafe_allow_html=True)
 if auto_refresh:
     time.sleep(300)
+    st.rerun()
+elif live_news_mode:
+    # Fast opt-in refresh loop dedicated to near-real-time news updates.
+    # Note: true 1-second polling is not used deliberately - news wires
+    # do not publish that fast, and hitting free RSS providers every
+    # second would risk IP rate-limiting/blocking and waste Streamlit
+    # Cloud compute. 20s is the fastest safe, respectful interval.
+    time.sleep(20)
     st.rerun()
