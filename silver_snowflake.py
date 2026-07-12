@@ -1004,6 +1004,50 @@ def make_dxy_overlay_chart(silver_df, dxy_df):
     fig.update_yaxes(title_text="DXY", secondary_y=True)
     return fig
 
+# ── Long-Term Historical Chart ──────────────────────────────────
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_long_term_history(range_="5y"):
+    """Fetch long-range daily silver history to show historical ups & downs."""
+    return _yf_fetch(TICKER, "1d", range_)
+
+def make_long_term_chart(df, current_price, range_label="5y"):
+    """Area/line chart of long-term price history with the live price overlaid,
+    plus markers for the period's high and low."""
+    df = df.copy()
+    if df.index.tzinfo is not None:
+        df.index = df.index.tz_convert("UTC").tz_localize(None)
+    close = df["Close"]
+    hi_idx = close.idxmax(); lo_idx = close.idxmin()
+    hi_val = float(close.loc[hi_idx]); lo_val = float(close.loc[lo_idx])
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=df.index, y=close.values, name="Silver (SI=F)",
+        line=dict(color="#c0c0c0", width=1.8),
+        fill="tozeroy", fillcolor="rgba(192,192,192,0.08)",
+        hovertemplate="%{x|%b %d, %Y}<br>$%{y:.2f}<extra></extra>"))
+    fig.add_trace(go.Scatter(
+        x=[hi_idx], y=[hi_val], mode="markers+text", name="Period High",
+        marker=dict(color="#3fb950", size=9, symbol="triangle-up"),
+        text=[" High $"+str(round(hi_val,2))], textposition="top center",
+        textfont=dict(color="#3fb950", size=11)))
+    fig.add_trace(go.Scatter(
+        x=[lo_idx], y=[lo_val], mode="markers+text", name="Period Low",
+        marker=dict(color="#f85149", size=9, symbol="triangle-down"),
+        text=[" Low $"+str(round(lo_val,2))], textposition="bottom center",
+        textfont=dict(color="#f85149", size=11)))
+    fig.add_hline(y=current_price, line_color="#42a5f5", line_width=1.5, line_dash="dot",
+        annotation_text=" LIVE $"+str(current_price), annotation_position="right",
+        annotation_font_color="#42a5f5", annotation_font_size=11)
+    fig.update_layout(
+        template="plotly_dark", paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+        height=480, title="Silver Long-Term History ("+range_label+") — Live Price Overlay",
+        margin=dict(l=10, r=110, t=45, b=10),
+        legend=dict(orientation="h", font=dict(size=11, color="#c9d1d9")),
+        hovermode="x unified")
+    fig.update_xaxes(gridcolor="#1c2128", showgrid=True)
+    fig.update_yaxes(gridcolor="#1c2128", showgrid=True, title_text="USD/oz", tickformat="$,.2f")
+    return fig
+
 def tradingview_widget(symbol="OANDA:XAGUSD",theme="dark",height=580,interval="60"):
     studies=["RSI@tv-basicstudies","MASimple@tv-basicstudies","MACD@tv-basicstudies",
              "IchimokuCloud@tv-basicstudies","SuperTrend@tv-basicstudies"]
@@ -1148,6 +1192,9 @@ with st.sidebar:
     run_btn = st.button("🔄 Refresh Now", use_container_width=True, type="primary")
     st.divider()
     forecast_days = st.slider("📅 Forecast Days", 1, 30, 7)
+    st.divider()
+    hist_range = st.selectbox("📈 Historical Range", ["1y","2y","5y","10y","max"], index=2,
+        help="How far back the Long-Term History chart looks.")
     st.divider()
     st.markdown("**Chart Overlays**")
     show_gold_overlay = st.checkbox("Show Gold/Silver Ratio Chart", value=True)
@@ -1360,6 +1407,24 @@ with tab_tv:
         tv_height = st.slider("Chart Height",400,800,580,50,key="tv_height")
     tv_html = tradingview_widget(symbol="OANDA:XAGUSD",theme="dark",height=tv_height,interval=tv_interval)
     components.html(tv_html, height=tv_height+30, scrolling=False)
+st.divider()
+# ── Long-Term Historical Price Section ─────────────────────────────
+st.markdown("### 📈 Long-Term Historical Chart — Price History + Live Overlay")
+st.caption("Full historical price swings — highs & lows over time — with the live current price overlaid as a dotted blue line.")
+with st.spinner("Fetching long-term historical data…"):
+    try:
+        lt_df = fetch_long_term_history(hist_range)
+        fig_lt = make_long_term_chart(lt_df, snap["price"], range_label=hist_range)
+        st.plotly_chart(fig_lt, use_container_width=True)
+        lt_close = lt_df["Close"]
+        lc1,lc2,lc3,lc4 = st.columns(4)
+        lc1.metric("Period High","$"+str(round(float(lt_close.max()),2)))
+        lc2.metric("Period Low","$"+str(round(float(lt_close.min()),2)))
+        lc3.metric("Live Price","$"+str(snap["price"]))
+        pct_from_high = (snap["price"]-float(lt_close.max()))/float(lt_close.max())*100
+        lc4.metric("vs. Period High",str(round(pct_from_high,1))+"%")
+    except Exception as e:
+        st.warning("Long-term historical data unavailable: "+str(e))
 st.divider()
 # ── Gold/Silver Ratio & DXY Charts ───────────────────────────────────────────────────────────
 if show_gold_overlay or show_dxy_overlay:
