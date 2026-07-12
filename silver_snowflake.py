@@ -559,6 +559,14 @@ def _classify_headline(title):
         category, impact = "Macro & Fed", "High"
     elif any(k in t for k in GEO_KW):
         category, impact = "Geopolitical", "High"
+    elif any(k in t for k in INDUSTRIAL_KW):
+        category, impact = "Industrial Demand", "Medium"
+    elif "silver" in t or "xag" in t:
+        category, impact = "Silver", "Medium"
+    elif "gold" in t or "xau" in t:
+        category, impact = "Gold", "Medium"
+    else:
+        category, impact = "General", "Low"
     return sentiment, category, impact
 
 @st.cache_data(ttl=20, show_spinner=False)
