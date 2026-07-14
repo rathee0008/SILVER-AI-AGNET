@@ -48,7 +48,6 @@ st.set_page_config(
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Manrope:wght@600;700;800&display=swap');
-* { box-sizing: border-box; }
 html, body, [data-testid="stAppViewContainer"] { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; scroll-behavior: smooth; }
 [data-testid="stAppViewContainer"] { background-color: #0a0d12; background-image: radial-gradient(circle at 15% 0%, rgba(245,212,119,0.06) 0%, transparent 42%), radial-gradient(circle at 100% 15%, rgba(88,166,255,0.06) 0%, transparent 45%), repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 44px), repeating-linear-gradient(90deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 44px); background-attachment: fixed; }
 [data-testid="stSidebar"] { background: linear-gradient(180deg, #12161d 0%, #0d1015 100%); border-right: 1px solid #232a35; box-shadow: 4px 0 24px rgba(0,0,0,0.35); }
@@ -107,7 +106,6 @@ h3 { color: #d9dfe8 !important; letter-spacing: 0.01em; }
 [data-baseweb="tab"]:hover { background: rgba(212,175,55,0.08); }
 [aria-selected="true"][data-baseweb="tab"] { background: linear-gradient(135deg,#d4af37,#8a6d1f) !important; color:#161b22 !important; box-shadow: 0 2px 10px rgba(212,175,55,0.35); }
 [data-testid="stCaptionContainer"] { color:#6b7686 !important; letter-spacing: 0.02em; border-top: 1px solid #1c212a; padding-top: 10px; margin-top: 8px; }
-[data-testid="column"] { padding: 0 6px; }
 [data-testid="stSpinner"] div { border-top-color: #d4af37 !important; }
 </style>
 """, unsafe_allow_html=True)
