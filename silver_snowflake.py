@@ -47,68 +47,95 @@ st.set_page_config(
 
 st.markdown("""
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap');
+html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 [data-testid="stAppViewContainer"] { background: #0d1117; }
-[data-testid="stSidebar"] { background: #161b22; }
-h1,h2,h3,h4 { color: #f0f6fc; }
-.metric-card {
-    background: #161b22; border: 1px solid #30363d;
-    border-radius: 10px; padding: 16px 20px; text-align: center;
-}
-.metric-label { color: #8b949e; font-size: 13px; margin-bottom: 4px; }
-.metric-value { color: #f0f6fc; font-size: 26px; font-weight: 700; }
-.metric-sub { font-size: 13px; margin-top: 4px; }
-.bull { color: #3fb950; } .bear { color: #f85149; } .neut { color: #d29922; }
-.tag { display:inline-block; border-radius:6px; padding:2px 10px; font-size:12px; font-weight:600; }
-.tag-bull { background:#1a3626; color:#3fb950; }
-.tag-bear { background:#3c1212; color:#f85149; }
-.tag-neut { background:#2d2209; color:#d29922; }
-.analysis-box {
-    background:#161b22; border:1px solid #30363d; border-radius:10px;
-    padding:20px 24px; color:#c9d1d9; line-height:1.7;
-    white-space:pre-wrap; font-family:"Segoe UI",sans-serif;
-}
-.level-badge {
-    background:#21262d; border:1px solid #30363d; border-radius:6px;
-    padding:3px 10px; color:#e6edf3; font-size:14px; font-weight:600;
-    display:inline-block; margin:3px;
-}
-.sup-badge { border-color:#3fb950; color:#3fb950; }
-.res-badge { border-color:#f85149; color:#f85149; }
-.fib-badge { border-color:#58a6ff; color:#58a6ff; }
-.score-bar-wrap { background:#21262d; border-radius:4px; height:10px; width:100%; }
-.score-bar { height:10px; border-radius:4px; transition: width 0.3s; }
-.conf-table { width:100%; border-collapse:collapse; font-size:13px; }
-.conf-table th { color:#8b949e; font-weight:600; padding:6px 10px; text-align:left;
-    border-bottom:1px solid #30363d; }
-.conf-table td { padding:6px 10px; border-bottom:1px solid #21262d; color:#c9d1d9; }
-.conf-table tr:last-child td { border-bottom:none; }
-.pred-card {
-    background: linear-gradient(135deg, #161b22, #1c2128);
-    border: 1px solid #30363d; border-radius: 10px;
-    padding: 16px; margin: 6px 0; text-align: center;
-}
-.gauge-container {
-    background:#161b22; border:1px solid #30363d; border-radius:10px;
-    padding:16px; text-align:center;
-}
-.news-card {
-    background:#161b22; border:1px solid #30363d; border-radius:8px;
-    padding:12px 16px; margin:6px 0;
-}
-.ratio-card {
-    background: linear-gradient(135deg, #1a1f2e, #161b22);
-    border: 1px solid #3d4f7c; border-radius:10px; padding:16px; text-align:center;
-}
-.etf-vflow-card {
-    background: linear-gradient(135deg, #1a2333, #161b22);
-    border: 1px solid #2d4a6b; border-radius:10px; padding:16px; margin:6px 0;
-}
-.etf-stat {
-    background:#0d1117; border:1px solid #21262d; border-radius:8px;
-    padding:10px 14px; text-align:center;
-}
-</style>
-""", unsafe_allow_html=True)
+[data-testid="stSidebar"] { background: #10151c; border-right: 1px solid #21262d; }
+h1,h2,h3,h4 { color: #f0f6fc; font-family: 'Inter', sans-serif; }
+.hero-bar {
+    height: 4px; width: 100%; border-radius: 4px; margin: 6px 0 18px 0;
+        background: linear-gradient(90deg, #58a6ff, #3fb950, #d29922, #f85149, #58a6ff);
+            background-size: 300% 100%; animation: heroShift 8s ease infinite;
+            }
+            @keyframes heroShift { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
+            .metric-card {
+                background: #161b22; border: 1px solid #30363d; border-left: 3px solid #30363d;
+                    border-radius: 12px; padding: 16px 20px; text-align: center;
+                        transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+                        }
+                        .metric-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,0.35); }
+                        .metric-card.accent-bull { border-left-color: #3fb950; }
+                        .metric-card.accent-bear { border-left-color: #f85149; }
+                        .metric-card.accent-neut { border-left-color: #d29922; }
+                        .metric-label { color: #8b949e; font-size: 12px; letter-spacing: 0.4px; text-transform: uppercase; margin-bottom: 6px; }
+                        .metric-value { color: #f0f6fc; font-size: 26px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+                        .metric-sub { font-size: 13px; margin-top: 4px; }
+                        .bull { color: #3fb950; } .bear { color: #f85149; } .neut { color: #d29922; }
+                        .tag { display:inline-block; border-radius:20px; padding:3px 12px; font-size:11px; font-weight:700; letter-spacing:0.3px; }
+                        .tag-bull { background:#1a3626; color:#3fb950; border:1px solid #23532f; }
+                        .tag-bear { background:#3c1212; color:#f85149; border:1px solid #5a1f1f; }
+                        .tag-neut { background:#2d2209; color:#d29922; border:1px solid #4a3a12; }
+                        .section-head {
+                            display:flex; align-items:center; gap:10px; margin: 6px 0 14px 0;
+                                padding-bottom: 8px; border-bottom: 1px solid #21262d;
+                                }
+                                .section-head .dot { width:8px; height:8px; border-radius:50%; background:#58a6ff; }
+                                .section-head span { color:#f0f6fc; font-size:1.25rem; font-weight:700; }
+                                .analysis-box {
+                                    background:#161b22; border:1px solid #30363d; border-radius:10px;
+                                        padding:20px 24px; color:#c9d1d9; line-height:1.7;
+                                            white-space:pre-wrap; font-family:"Segoe UI",sans-serif;
+                                            }
+                                            .level-badge {
+                                                background:#21262d; border:1px solid #30363d; border-radius:6px;
+                                                    padding:3px 10px; color:#e6edf3; font-size:14px; font-weight:600;
+                                                        display:inline-block; margin:3px; font-family:'JetBrains Mono', monospace;
+                                                        }
+                                                        .sup-badge { border-color:#3fb950; color:#3fb950; }
+                                                        .res-badge { border-color:#f85149; color:#f85149; }
+                                                        .fib-badge { border-color:#58a6ff; color:#58a6ff; }
+                                                        .score-bar-wrap { background:#21262d; border-radius:4px; height:10px; width:100%; }
+                                                        .score-bar { height:10px; border-radius:4px; transition: width 0.3s; }
+                                                        .conf-table { width:100%; border-collapse:collapse; font-size:13px; }
+                                                        .conf-table th { color:#8b949e; font-weight:600; padding:6px 10px; text-align:left;
+                                                            border-bottom:1px solid #30363d; }
+                                                            .conf-table td { padding:6px 10px; border-bottom:1px solid #21262d; color:#c9d1d9; }
+                                                            .conf-table tr:last-child td { border-bottom:none; }
+                                                            .pred-card {
+                                                                background: linear-gradient(135deg, #161b22, #1c2128);
+                                                                    border: 1px solid #30363d; border-left: 3px solid transparent; border-radius: 10px;
+                                                                        padding: 16px; margin: 6px 0; text-align: center;
+                                                                            transition: transform 0.15s ease;
+                                                                            }
+                                                                            .pred-card:hover { transform: translateY(-2px); }
+                                                                            .pred-card.accent-bull { border-left-color: #3fb950; }
+                                                                            .pred-card.accent-bear { border-left-color: #f85149; }
+                                                                            .pred-card.accent-neut { border-left-color: #d29922; }
+                                                                            .gauge-container {
+                                                                                background:#161b22; border:1px solid #30363d; border-radius:10px;
+                                                                                    padding:16px; text-align:center;
+                                                                                    }
+                                                                                    .news-card {
+                                                                                        background:#161b22; border:1px solid #30363d; border-radius:8px;
+                                                                                            padding:12px 16px; margin:6px 0;
+                                                                                            }
+                                                                                            .ratio-card {
+                                                                                                background: linear-gradient(135deg, #1a1f2e, #161b22);
+                                                                                                    border: 1px solid #3d4f7c; border-radius:10px; padding:16px; text-align:center;
+                                                                                                    }
+                                                                                                    .etf-vflow-card {
+                                                                                                        background: linear-gradient(135deg, #1a2333, #161b22);
+                                                                                                            border: 1px solid #2d4a6b; border-radius:10px; padding:16px; margin:6px 0;
+                                                                                                            }
+                                                                                                            .etf-stat {
+                                                                                                                background:#0d1117; border:1px solid #21262d; border-left: 3px solid transparent; border-radius:8px;
+                                                                                                                    padding:10px 14px; text-align:center; transition: transform 0.15s ease;
+                                                                                                                    }
+                                                                                                                    .etf-stat:hover { transform: translateY(-2px); }
+                                                                                                                    .etf-stat.accent-bull { border-left-color: #3fb950; }
+                                                                                                                    .etf-stat.accent-bear { border-left-color: #f85149; }
+                                                                                                                    .etf-stat.accent-neut { border-left-color: #d29922; }
+                                                                                                                    </style>""", unsafe_allow_html=True)
 
 TICKER = "SI=F"
 GOLD_TICKER = "GC=F"
@@ -1153,11 +1180,11 @@ def sig_tag(label, kind):
     return '<span class="tag '+cls+'">'+label+'</span>'
 
 def metric_card(label, value, sub="", sub_class="neut"):
-    return ('<div class="metric-card">'
+    accent = {"bull":"accent-bull","bear":"accent-bear","neut":"accent-neut"}.get(sub_class,"accent-neut")
+    return ('<div class="metric-card '+accent+'">'
             '<div class="metric-label">'+label+'</div>'
             '<div class="metric-value">'+str(value)+'</div>'
             '<div class="metric-sub '+sub_class+'">'+sub+'</div></div>')
-
 def score_bar_html(score, color):
     return ('<div style="margin:8px 0">'
             '<div style="display:flex;justify-content:space-between;font-size:12px;color:#8b949e;margin-bottom:4px">'
@@ -1225,12 +1252,17 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN PAGE
 # ══════════════════════════════════════════════════════════════════════════════
-st.markdown("<h1 style=color:#f0f6fc;margin-bottom:0>⚡ Silver AI Trading Agent PRO v4</h1>",
-            unsafe_allow_html=True)
+st.markdown("""
+<div style="display:flex;align-items:center;gap:14px;margin-bottom:2px">
+<div style="width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,#58a6ff,#3fb950);display:flex;align-items:center;justify-content:center;font-size:22px">⚡</div>
+<div>
+<h1 style="color:#f0f6fc;margin:0;font-size:1.9rem;font-weight:800">Silver AI Trading Agent <span style="color:#58a6ff">PRO v4</span></h1>
+</div>
+</div>
+""", unsafe_allow_html=True)
 st.caption("Live COMEX Silver Futures (SI=F) · Updated "+datetime.now().strftime("%H:%M:%S")
-           +" · New: ETF Volume Flow · Gold/Silver Ratio · DXY Overlay · News Sentiment")
-st.divider()
-
++" · New: ETF Volume Flow · Gold/Silver Ratio · DXY Overlay · News Sentiment")
+st.markdown('<div class="hero-bar"></div>', unsafe_allow_html=True)
 if run_btn:
     st.cache_data.clear()
 
@@ -1377,7 +1409,7 @@ with sc2:
         for col,(name,lbl,color,val) in zip(row_cols,row_items):
             col.markdown('<div style="background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:8px 10px;margin-bottom:4px">'
                          '<div style="font-size:11px;color:#8b949e">'+name+'</div>'
-                         '<div style="font-size:13px;color:'+color+';font-weight:700">'+lbl+'</div>'
+'<div style="margin-top:2px">'+sig_tag(lbl, {"BULL":"bull","BEAR":"bear","NEUT":"neut"}.get(lbl,"neut"))+'</div>'
                          '<div style="font-size:11px;color:#6e7681">'+str(val)+'</div></div>',
                          unsafe_allow_html=True)
 st.divider()
@@ -1487,8 +1519,9 @@ if show_etf_vflow:
             pct_str = f"{info['pct_chg_5d']:+.1f}%"
             pct_color = "#f85149" if info["pct_chg_5d"] < 0 else "#3fb950"
             bear_tag = ' <span style="color:#f85149;font-size:10px">[BEAR]</span>' if info["is_bear"] else ""
+            etf_accent = "bull" if flow_color == "#3fb950" else "bear" if flow_color == "#f85149" else "neut"
             col_el.markdown(
-                '<div class="etf-stat">'
+                f'<div class="etf-stat accent-{etf_accent}">'
                 f'<div style="font-size:13px;font-weight:700;color:#f0f6fc">{sym}{bear_tag}</div>'
                 f'<div style="font-size:11px;color:#8b949e;margin-bottom:6px">{info["name"][:20]}</div>'
                 f'<div style="font-size:18px;font-weight:700;color:#f0f6fc">${info["price"]}</div>'
@@ -1813,19 +1846,21 @@ ens_chg_pct = ((ens_target - current) / current) * 100
 ens_color = '#3fb950' if ens_target > current else '#f85149'
 ens_arrow = '▲' if ens_target > current else '▼'
 pa, pb, pc = st.columns(3)
+ens_accent = "bull" if ens_color == "#3fb950" else "bear"
 pa.markdown(
-    f'<div class="pred-card"><div style="font-size:0.7rem;color:#8b949e">Ensemble Target ({forecast_days}d)</div>'
+    f'<div class="pred-card accent-{ens_accent}"><div style="font-size:0.7rem;color:#8b949e">Ensemble Target ({forecast_days}d)</div>'
     f'<div style="font-size:2rem;font-weight:700;color:{ens_color}">{ens_arrow} ${ens_target:.2f}</div>'
     f'<div style="font-size:0.85rem;color:#8b949e">{ens_chg_pct:+.2f}% from current</div></div>',
     unsafe_allow_html=True)
 pb.markdown(
-    f'<div class="pred-card"><div style="font-size:0.7rem;color:#8b949e">90% Confidence Range</div>'
+    f'<div class="pred-card accent-neut"><div style="font-size:0.7rem;color:#8b949e">90% Confidence Range</div>'
     f'<div style="font-size:1.4rem;font-weight:700;color:#f0f6fc">${ci_lower[-1]:.2f} – ${ci_upper[-1]:.2f}</div>'
     f'<div style="font-size:0.85rem;color:#8b949e">±{((ci_upper[-1]-ci_lower[-1])/2/current*100):.1f}% uncertainty</div></div>',
     unsafe_allow_html=True)
 bulls_count = sum(1 for v in [lin_pred[-1],poly_pred[-1],ma_pred[-1],exp_pred[-1],mom_pred[-1]] if v>current)
+consensus_accent = "bull" if bulls_count >= 3 else "bear" if bulls_count <= 2 else "neut"
 pc.markdown(
-    f'<div class="pred-card"><div style="font-size:0.7rem;color:#8b949e">Model Consensus</div>'
+    f'<div class="pred-card accent-{consensus_accent}"><div style="font-size:0.7rem;color:#8b949e">Model Consensus</div>'
     f'<div style="font-size:1.4rem;font-weight:700;color:#f0f6fc">{bulls_count}/5 Bullish</div>'
     f'<div style="font-size:0.85rem;color:#8b949e">models above current price</div></div>',
     unsafe_allow_html=True)
@@ -1941,8 +1976,9 @@ ma5_val=snap['daily_df']['EMA20'].iloc[-1] if 'EMA20' in snap['daily_df'].column
 ma50_val=snap['daily_df']['EMA50'].iloc[-1] if 'EMA50' in snap['daily_df'].columns else current
 
 def signal_card(col, title, signal, value):
+    accent = "bull" if "🟢" in signal else "bear" if "🔴" in signal else "neut"
     col.markdown(
-        f'<div class="pred-card">'
+        f'<div class="pred-card accent-{accent}">'
         f'<div style="font-size:0.65rem;color:#8b949e;text-transform:uppercase;letter-spacing:1px;">{title}</div>'
         f'<div style="font-size:0.9rem;font-weight:600;color:#f0f6fc;margin:8px 0;">{signal}</div>'
         f'<div style="font-size:0.75rem;color:#6e7681;">{value}</div>'
