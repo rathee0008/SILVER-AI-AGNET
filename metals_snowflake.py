@@ -107,6 +107,10 @@ h3 { color: #d9dfe8 !important; letter-spacing: 0.01em; }
 [aria-selected="true"][data-baseweb="tab"] { background: linear-gradient(135deg,#d4af37,#8a6d1f) !important; color:#161b22 !important; box-shadow: 0 2px 10px rgba(212,175,55,0.35); }
 [data-testid="stCaptionContainer"] { color:#6b7686 !important; letter-spacing: 0.02em; border-top: 1px solid #1c212a; padding-top: 10px; margin-top: 8px; }
 [data-testid="stSpinner"] div { border-top-color: #d4af37 !important; }
+.metric-value { font-size: clamp(13px, 2.4vw, 27px); white-space: nowrap; }
+.metric-label { font-size: clamp(9px, 1vw, 12px); white-space: normal; }
+.metric-card { padding: 14px 6px; }
+@media (max-width: 1300px) { .metric-value { font-size: clamp(11px, 2vw, 18px); } .metric-card { padding: 10px 4px; } .metric-sub { font-size: 10px; } }
 </style>
 """, unsafe_allow_html=True)
 
