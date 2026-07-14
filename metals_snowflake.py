@@ -110,7 +110,7 @@ h3 { color: #d9dfe8 !important; letter-spacing: 0.01em; }
 .metric-value { font-size: clamp(13px, 2.4vw, 27px); white-space: nowrap; }
 .metric-label { font-size: clamp(9px, 1vw, 12px); white-space: normal; }
 .metric-card { padding: 14px 6px; }
-@media (max-width: 1300px) { .metric-value { font-size: clamp(11px, 2vw, 18px); } .metric-card { padding: 10px 4px; } .metric-sub { font-size: 10px; } }
+@media (max-width: 1300px) { .metric-value { font-size: clamp(10px, 1.7vw, 18px); } .metric-card { padding: 10px 3px; } .metric-sub { font-size: 9px; } .metric-label { font-size: clamp(8px, 0.9vw, 11px); } }
 </style>
 """, unsafe_allow_html=True)
 
