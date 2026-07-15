@@ -1397,17 +1397,17 @@ if show_india_premium:
             price_key = "india_local_price_gold" if asset_for_premium == "Gold (24K)" else "india_local_price_silver"
             lp_col1, lp_col2 = st.columns([5, 1])
             with lp_col1:
-            local_price = st.number_input(f"Local Market Price (Rs per {unit_label}) - live from IBJA, editable",
+                local_price = st.number_input(f"Local Market Price (Rs per {unit_label}) - live from IBJA, editable",
                                     min_value=0.0, value=float(live_default) if live_default else 0.0, step=100.0, key=price_key)
             with lp_col2:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("Refresh Live", key=f"refresh_{price_key}"):
-            st.session_state[price_key] = float(live_default) if live_default else 0.0
-            st.rerun()
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("Refresh Live", key=f"refresh_{price_key}"):
+                    st.session_state[price_key] = float(live_default) if live_default else 0.0
+                    st.rerun()
             if live_default:
-            st.caption(f"IBJA live reference: Rs {live_default:,.0f} per {unit_label} (auto-filled, editable above).")
+                st.caption(f"IBJA live reference: Rs {live_default:,.0f} per {unit_label} (auto-filled, editable above).")
             else:
-            st.caption("Could not fetch live IBJA rate right now - enter the local price manually.")
+                st.caption("Could not fetch live IBJA rate right now - enter the local price manually.")
             if local_price > 0:
                 premium = local_price - landed_cost
                 premium_pct = premium / landed_cost * 100 if landed_cost else 0
