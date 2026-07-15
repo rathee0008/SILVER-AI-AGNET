@@ -1406,7 +1406,7 @@ if show_india_premium:
             with lp_col2:
                 st.markdown("<br>", unsafe_allow_html=True)
                 if st.button("Refresh Live", key=f"refresh_{price_key}"):
-                   st.session_state[reset_flag_key] = True
+                    st.session_state[reset_flag_key] = True
                     st.rerun()
             if live_default:
                 st.caption(f"IBJA live reference: Rs {live_default:,.0f} per {unit_label} (auto-filled, editable above).")
