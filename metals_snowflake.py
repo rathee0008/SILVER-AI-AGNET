@@ -1395,6 +1395,10 @@ if show_india_premium:
             ibja_rates = fetch_ibja_local_rates()
             live_default = ibja_rates.get("gold_999_10g") if asset_for_premium == "Gold (24K)" else ibja_rates.get("silver_999_kg")
             price_key = "india_local_price_gold" if asset_for_premium == "Gold (24K)" else "india_local_price_silver"
+            reset_flag_key = f"reset_{price_key}"
+            if st.session_state.get(reset_flag_key):
+                st.session_state[price_key] = float(live_default) if live_default else 0.0
+                st.session_state[reset_flag_key] = False
             lp_col1, lp_col2 = st.columns([5, 1])
             with lp_col1:
                 local_price = st.number_input(f"Local Market Price (Rs per {unit_label}) - live from IBJA, editable",
@@ -1402,7 +1406,7 @@ if show_india_premium:
             with lp_col2:
                 st.markdown("<br>", unsafe_allow_html=True)
                 if st.button("Refresh Live", key=f"refresh_{price_key}"):
-                    st.session_state[price_key] = float(live_default) if live_default else 0.0
+                   st.session_state[reset_flag_key] = True
                     st.rerun()
             if live_default:
                 st.caption(f"IBJA live reference: Rs {live_default:,.0f} per {unit_label} (auto-filled, editable above).")
