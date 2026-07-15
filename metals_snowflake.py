@@ -118,6 +118,9 @@ TICKER = "SI=F"
 SECOND_TICKER = "GC=F"
 DXY_TICKER = "DX-Y.NYB"
 YIELD_10Y_TICKER = "^TNX"
+INR_TICKER = "USDINR=X"
+TROY_OZ_GRAMS = 31.1035
+GOLD_PURITY = {"24K (999)": 1.0, "22K (916)": 0.916, "18K (750)": 0.750}
 AI_MODEL = "claude-opus-4-5"
 AI_MODEL_FAST = "claude-haiku-4-5"
 YF_BASE = "https://query1.finance.yahoo.com/v8/finance/chart"
@@ -397,6 +400,24 @@ def fetch_gs_ratio_and_dxy():
     except Exception:
         pass
     return result
+
+# ── Indian Gold/Silver Price Conversion (USD/INR) ──────────────────────────
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_usdinr():
+    result = {"rate": None, "daily": None}
+    try:
+        df = _yf_fetch(INR_TICKER, "1d", "6mo")
+        result["rate"] = float(df["Close"].iloc[-1])
+        result["daily"] = df
+    except Exception:
+        pass
+    return result
+
+def usd_oz_to_inr_per_10g(usd_per_oz, usdinr, purity=1.0):
+    return usd_per_oz * usdinr / TROY_OZ_GRAMS * 10 * purity
+
+def usd_oz_to_inr_per_kg(usd_per_oz, usdinr):
+    return usd_per_oz * usdinr / TROY_OZ_GRAMS * 1000
 
 # ── ETF Volume Flow ────────────────────────────────────────────────
 @st.cache_data(ttl=300, show_spinner=False)
@@ -1160,6 +1181,8 @@ with st.sidebar:
     show_dxy_overlay = st.checkbox(f"Show DXY vs {PRIMARY} Chart", value=True)
     show_news = st.checkbox("Show News Sentiment", value=True)
     show_etf_vflow = st.checkbox("Show ETF Volume Flow", value=True)
+    show_india_prices = st.checkbox("Show Indian Gold/Silver Prices", value=True)
+    show_india_premium = st.checkbox("Show India Price Premium", value=True)
     st.divider()
     st.markdown("**Indicators**")
     st.markdown("EMA 20/50/200 · RSI · StochRSI")
@@ -1253,6 +1276,101 @@ if gs_ratio:
 </div>
 </div>
 </div>''', unsafe_allow_html=True)
+
+# ── Indian Gold & Silver Live Prices ───────────────────────────────────────
+inr_data = {}
+if show_india_prices or show_india_premium:
+    inr_data = fetch_usdinr()
+
+if show_india_prices:
+    st.markdown("### Indian Live Gold & Silver Prices")
+    usdinr = inr_data.get("rate")
+    gold_usd_oz = snap["price"] if IS_GOLD else snap.get("second_price")
+    silver_usd_oz = snap.get("second_price") if IS_GOLD else snap["price"]
+    if usdinr and (gold_usd_oz or silver_usd_oz):
+        st.caption(f"Converted from live COMEX spot using USD/INR = {usdinr:.2f} (Rs). Purity-adjusted. Excludes duty/GST/making charges (see Premium section below)")
+        ic1, ic2, ic3, ic4, ic5 = st.columns(5)
+        ic1.markdown(metric_card("USD / INR", f"Rs {usdinr:.2f}", "Live rate", "neut"), unsafe_allow_html=True)
+        if gold_usd_oz:
+            g24 = usd_oz_to_inr_per_10g(gold_usd_oz, usdinr, 1.0)
+            g22 = usd_oz_to_inr_per_10g(gold_usd_oz, usdinr, 0.916)
+            g18 = usd_oz_to_inr_per_10g(gold_usd_oz, usdinr, 0.750)
+            ic2.markdown(metric_card("Gold 24K /10g", f"Rs {g24:,.0f}", "999 purity", "neut"), unsafe_allow_html=True)
+            ic3.markdown(metric_card("Gold 22K /10g", f"Rs {g22:,.0f}", "916 purity", "neut"), unsafe_allow_html=True)
+            ic4.markdown(metric_card("Gold 18K /10g", f"Rs {g18:,.0f}", "750 purity", "neut"), unsafe_allow_html=True)
+        if silver_usd_oz:
+            s_kg = usd_oz_to_inr_per_kg(silver_usd_oz, usdinr)
+            ic5.markdown(metric_card("Silver /kg", f"Rs {s_kg:,.0f}", "999 purity", "neut"), unsafe_allow_html=True)
+        inr_daily = inr_data.get("daily")
+        gold_daily = snap["daily_df"] if IS_GOLD else snap.get("second_daily")
+        silver_daily = snap.get("second_daily") if IS_GOLD else snap["daily_df"]
+        if inr_daily is not None and gold_daily is not None and silver_daily is not None:
+            gd_i = gold_daily.copy(); sd_i = silver_daily.copy(); ir_i = inr_daily.copy()
+            for d_ in (gd_i, sd_i, ir_i):
+                if d_.index.tzinfo is not None:
+                    d_.index = d_.index.tz_convert("UTC").tz_localize(None)
+            common_idx = gd_i.index.intersection(sd_i.index).intersection(ir_i.index)
+            if len(common_idx) > 5:
+                gold_inr = gd_i.loc[common_idx, "Close"] * ir_i.loc[common_idx, "Close"] / TROY_OZ_GRAMS * 10
+                silver_inr = sd_i.loc[common_idx, "Close"] * ir_i.loc[common_idx, "Close"] / TROY_OZ_GRAMS * 1000
+                fig_india = make_subplots(specs=[[{"secondary_y": True}]])
+                fig_india.add_trace(go.Scatter(x=common_idx, y=gold_inr.values, name="Gold Rs/10g (24K)",
+                    line=dict(color="#ffd700", width=2)), secondary_y=False)
+                fig_india.add_trace(go.Scatter(x=common_idx, y=silver_inr.values, name="Silver Rs/kg",
+                    line=dict(color="#c0c0c0", width=2)), secondary_y=True)
+                fig_india.update_layout(template="plotly_dark", paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                    height=340, title="Indian Gold (Rs/10g) and Silver (Rs/kg) - 6 Month Trend (COMEX x USD/INR)",
+                    legend=dict(font=dict(size=11, color="#c9d1d9")), hovermode="x unified",
+                    margin=dict(l=10, r=60, t=40, b=10))
+                fig_india.update_yaxes(title_text="Gold Rs/10g", gridcolor="#1c2128", secondary_y=False)
+                fig_india.update_yaxes(title_text="Silver Rs/kg", secondary_y=True)
+                st.plotly_chart(fig_india, use_container_width=True)
+    else:
+        st.caption("Live USD/INR rate unavailable - try refreshing.")
+    st.divider()
+
+# ── India Price Premium Calculator ──────────────────────────────────────────
+if show_india_premium:
+    st.markdown("### Gold & Silver Price Premium (India)")
+    st.caption("Estimated landed cost (import duty + GST) for gold/silver in India, compared against a local market price you enter, to see the live premium or discount.")
+    usdinr = inr_data.get("rate")
+    gold_usd_oz = snap["price"] if IS_GOLD else snap.get("second_price")
+    silver_usd_oz = snap.get("second_price") if IS_GOLD else snap["price"]
+    if usdinr and (gold_usd_oz or silver_usd_oz):
+        pcol1, pcol2, pcol3 = st.columns(3)
+        with pcol1:
+            duty_pct = st.number_input("Import Duty + AIDC (%)", min_value=0.0, max_value=30.0, value=6.0, step=0.5, key="india_duty")
+        with pcol2:
+            gst_pct = st.number_input("GST (%)", min_value=0.0, max_value=15.0, value=3.0, step=0.5, key="india_gst")
+        with pcol3:
+            asset_for_premium = st.selectbox("Asset", ["Gold (24K)", "Silver"], key="india_prem_asset")
+        base_inr = None
+        unit_label = ""
+        if asset_for_premium == "Gold (24K)" and gold_usd_oz:
+            base_inr = usd_oz_to_inr_per_10g(gold_usd_oz, usdinr, 1.0)
+            unit_label = "10g (24K)"
+        elif asset_for_premium == "Silver" and silver_usd_oz:
+            base_inr = usd_oz_to_inr_per_kg(silver_usd_oz, usdinr)
+            unit_label = "kg"
+        if base_inr:
+            landed_cost = base_inr * (1 + duty_pct/100) * (1 + gst_pct/100)
+            lc1, lc2, lc3 = st.columns(3)
+            lc1.markdown(metric_card("Global Price (INR)", f"Rs {base_inr:,.0f}", f"per {unit_label}", "neut"), unsafe_allow_html=True)
+            lc2.markdown(metric_card("Landed Cost Estimate", f"Rs {landed_cost:,.0f}", f"+{duty_pct:.1f}% duty, +{gst_pct:.1f}% GST", "neut"), unsafe_allow_html=True)
+            local_price = st.number_input(f"Enter Local Market Price (Rs per {unit_label}) - optional",
+                                           min_value=0.0, value=0.0, step=100.0, key="india_local_price")
+            if local_price > 0:
+                premium = local_price - landed_cost
+                premium_pct = premium / landed_cost * 100 if landed_cost else 0
+                p_label = "PREMIUM" if premium >= 0 else "DISCOUNT"
+                lc3.markdown(metric_card(f"{p_label} vs Landed Cost", f"Rs {abs(premium):,.0f}",
+                                          f"{premium_pct:+.2f}%", "bull" if premium >= 0 else "bear"), unsafe_allow_html=True)
+            else:
+                lc3.markdown(metric_card("Premium vs Landed Cost", "-", "Enter local price above", "neut"), unsafe_allow_html=True)
+            st.caption("Landed cost = global spot converted to INR + import duty + GST. Actual jeweller/MCX prices also include making charges and local dealer margins - enter a real quote above to compute the live premium/discount.")
+    else:
+        st.caption("Live USD/INR rate unavailable - try refreshing.")
+    st.divider()
 
 # ── News Sentiment Display ────────────────────────────────────────────────────────────────
 news_data = {}
