@@ -16,9 +16,44 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import requests
+from bs4 import BeautifulSoup
 import streamlit as st
 import streamlit.components.v1 as components
 from plotly.subplots import make_subplots
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_ibja_local_rates():
+    """Fetch India's live local benchmark Gold (999 purity, Rs/10g) and Silver
+    (999 purity, Rs/kg) rates as published by IBJA (India Bullion and
+    Jewellers Association) at ibjarates.com. Returns dict with
+    gold_999_10g / silver_999_kg (float or None if unavailable)."""
+    result = {"gold_999_10g": None, "silver_999_kg": None}
+    try:
+        resp = requests.get("https://ibjarates.com/", timeout=8,
+                            headers={"User-Agent": "Mozilla/5.0"})
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        table = soup.find("table", class_="tableContainer")
+        if table:
+            for row in table.find_all("tr"):
+                cells = [c.get_text(strip=True) for c in row.find_all(["td", "th"])]
+                if len(cells) >= 3:
+                    label = cells[0]
+                    def _num(x):
+                        try:
+                            return float(x.replace(",", ""))
+                        except (ValueError, AttributeError):
+                            return None
+                    am_val, pm_val = _num(cells[1]), _num(cells[2])
+                    val = pm_val if pm_val is not None else am_val
+                    if label == "Gold 999":
+                        result["gold_999_10g"] = val
+                    elif label == "Silver 999":
+                        result["silver_999_kg"] = val
+    except Exception:
+        pass
+    return result
 
 try:
     import _snowflake
@@ -1357,8 +1392,22 @@ if show_india_premium:
             lc1, lc2, lc3 = st.columns(3)
             lc1.markdown(metric_card("Global Price (INR)", f"Rs {base_inr:,.0f}", f"per {unit_label}", "neut"), unsafe_allow_html=True)
             lc2.markdown(metric_card("Landed Cost Estimate", f"Rs {landed_cost:,.0f}", f"+{duty_pct:.1f}% duty, +{gst_pct:.1f}% GST", "neut"), unsafe_allow_html=True)
-            local_price = st.number_input(f"Enter Local Market Price (Rs per {unit_label}) - optional",
-                                           min_value=0.0, value=0.0, step=100.0, key="india_local_price")
+            ibja_rates = fetch_ibja_local_rates()
+            live_default = ibja_rates.get("gold_999_10g") if asset_for_premium == "Gold (24K)" else ibja_rates.get("silver_999_kg")
+            price_key = "india_local_price_gold" if asset_for_premium == "Gold (24K)" else "india_local_price_silver"
+            lp_col1, lp_col2 = st.columns([5, 1])
+            with lp_col1:
+            local_price = st.number_input(f"Local Market Price (Rs per {unit_label}) - live from IBJA, editable",
+                                    min_value=0.0, value=float(live_default) if live_default else 0.0, step=100.0, key=price_key)
+            with lp_col2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("Refresh Live", key=f"refresh_{price_key}"):
+            st.session_state[price_key] = float(live_default) if live_default else 0.0
+            st.rerun()
+            if live_default:
+            st.caption(f"IBJA live reference: Rs {live_default:,.0f} per {unit_label} (auto-filled, editable above).")
+            else:
+            st.caption("Could not fetch live IBJA rate right now - enter the local price manually.")
             if local_price > 0:
                 premium = local_price - landed_cost
                 premium_pct = premium / landed_cost * 100 if landed_cost else 0
